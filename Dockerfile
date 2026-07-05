@@ -4,7 +4,7 @@ WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PORT=6000 \
+    PORT=6001 \
     DB_PATH=/app/data/gamesense.db
 
 COPY requirements.txt .
@@ -14,8 +14,8 @@ COPY . .
 
 RUN mkdir -p /app/data /app/logs
 
-EXPOSE 6000
+EXPOSE 6001
 
 VOLUME ["/app/data"]
 
-CMD ["gunicorn", "--bind", "0.0.0.0:6000", "--workers", "2", "--threads", "4", "server:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:6001", "--workers", "2", "--threads", "4", "server:app"]
