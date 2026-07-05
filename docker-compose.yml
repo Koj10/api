@@ -1,0 +1,17 @@
+services:
+  api:
+    image: ghcr.io/koj10/api:1.0.3
+    container_name: gs_api
+    restart: unless-stopped
+    ports:
+      - "6001:6001"
+    env_file:
+      - .env
+    environment:
+      CONTAINER_PORT: "6001"
+      DB_PATH: "/app/data/gamesense.db"
+    volumes:
+      - gamesense-data:/app/data
+
+volumes:
+  gamesense-data:

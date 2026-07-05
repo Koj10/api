@@ -1,7 +1,6 @@
 # Основные настройки
 PROJECT=gunicorn
 DOMAIN=api.game-sense.ru
-SERVER_IP=193.176.78.125
 SERVICE_NAME=gs_api
 
 # Сетевые настройки

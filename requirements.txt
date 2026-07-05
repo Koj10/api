@@ -5,5 +5,5 @@ gunicorn
 pytz
 flask_jwt_extended
 werkzeug
-python-dotenv
+dotenv
 yookassa
