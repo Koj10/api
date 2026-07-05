@@ -1,21 +1,15 @@
-FROM python:3.12-slim
+FROM python:3.10-slim
 
 WORKDIR /app
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PORT=6001 \
-    DB_PATH=/app/data/gamesense.db
-
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt gunicorn && \
+    find . -name "__pycache__" -exec rm -rf {} + && \
+    find . -name "*.pyc" -delete
 
 COPY . .
 
-RUN mkdir -p /app/data /app/logs
+RUN find . -name "__pycache__" -exec rm -rf {} + \
+    && find . -name "*.pyc" -delete
 
-EXPOSE 6001
-
-VOLUME ["/app/data"]
-
-CMD ["gunicorn", "--bind", "0.0.0.0:6001", "--workers", "2", "--threads", "4", "server:app"]
+CMD ["gunicorn", "--config", "gunicorn.conf.py", "server:app"]

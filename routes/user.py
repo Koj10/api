@@ -270,7 +270,7 @@ def reset_password():
         to_email=email,
         subject="Восстановление пароля",
         text_body="",
-        html_body=f'<p>Перйдите по <a href="http://193.176.78.125/reset-password/{token}">ссылке</a> для восстановления пароля</p>\n\nhttp://193.176.78.125/reset-password/{token}',
+        html_body=f'<p>Перейдите по <a href="https://pc.game-sense.ru/reset-password/{token}">ссылке</a> для восстановления пароля</p>\n\nhttps://pc.game-sense.ru/reset-password/{token}',
     )
     return jsonify(
         {"message": "Ссылка для восстановления пароля, отправлена на почту"}

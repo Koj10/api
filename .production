@@ -1,11 +1,12 @@
 # Основные настройки
 PROJECT=gunicorn
-DOMAIN=193.176.78.125
+DOMAIN=api.game-sense.ru
+SERVER_IP=193.176.78.125
 SERVICE_NAME=gs_api
 
 # Сетевые настройки
 HOST_IP=0.0.0.0
-HOST_PORT=6001
-CONTAINER_PORT=6001
+HOST_PORT=6000
+CONTAINER_PORT=6000
 
 CERTBOT_EMAIL=cyansair05@gmail.com
