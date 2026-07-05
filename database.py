@@ -1,0 +1,167 @@
+import json
+import sqlite3
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+# По умолчанию SQLite рядом с api/; в проде задайте DB_PATH в .env
+_DB_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.getenv("DB_PATH") or os.path.join(_DB_DIR, "gamesense.db")
+
+
+def SQL_request(query, params=(), fetch="one", jsonify_result=False):
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(query, params)
+
+            if fetch == "all":
+                rows = cursor.fetchall()
+                columns = [desc[0] for desc in cursor.description]
+                result = [
+                    {
+                        col: json.loads(row[i])
+                        if isinstance(row[i], str) and row[i].startswith("{")
+                        else row[i]
+                        for i, col in enumerate(columns)
+                    }
+                    for row in rows
+                ]
+
+            elif fetch == "one":
+                row = cursor.fetchone()
+                if row:
+                    columns = [desc[0] for desc in cursor.description]
+                    result = {
+                        col: json.loads(row[i])
+                        if isinstance(row[i], str) and row[i].startswith("{")
+                        else row[i]
+                        for i, col in enumerate(columns)
+                    }
+                else:
+                    result = None
+            else:
+                conn.commit()
+                result = None
+
+        except sqlite3.Error as e:
+            print(f"Ошибка SQL: {e}")
+            raise
+
+    if jsonify_result and result is not None:
+        return json.dumps(result, ensure_ascii=False, indent=2)
+    return result
+
+
+def create_users():
+    SQL_request("""CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY,
+        first_name VARCHAR(50) NOT NULL,
+        middle_name VARCHAR(50),
+        last_name VARCHAR(50) NOT NULL,
+        email VARCHAR(255) NOT NULL UNIQUE,
+        email_confirmed BOOLEAN DEFAULT FALSE,
+        phone_number VARCHAR(20),
+        password_hash VARCHAR(255) NOT NULL,
+        date_of_birth DATE,
+        gender VARCHAR(10) DEFAULT 'male',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_login DATETIME,
+        balance INTEGER DEFAULT 0,
+        passport INTEGER DEFAULT 0,
+        cart JSON,
+        inventory JSON,
+        tg TEXT,
+        vk TEXT,
+        role TEXT DEFAULT 'user',
+        is_active BOOLEAN DEFAULT TRUE
+    )""")
+
+
+def create_verification_codes():
+    SQL_request("""CREATE TABLE IF NOT EXISTS verification_codes (
+        id INTEGER PRIMARY KEY,
+        email VARCHAR(255) NOT NULL,
+        code VARCHAR(10),
+        token TEXT,  -- для восстановления пароля
+        type VARCHAR(20) NOT NULL,  -- 'register', 'reset_password'
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        is_used BOOLEAN DEFAULT FALSE
+    )""")
+    SQL_request(
+        "CREATE INDEX IF NOT EXISTS idx_email_type ON verification_codes (email, type)"
+    )
+
+
+def create_time_packages():
+    SQL_request("""CREATE TABLE IF NOT EXISTS time_packages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name VARCHAR(50) NOT NULL,
+    description TEXT,
+    duration_minutes INTEGER NOT NULL CHECK(duration_minutes > 0),
+    price DECIMAL(10,2) NOT NULL CHECK(price >= 0),
+    time_period VARCHAR(10) CHECK(time_period IN ('дневной', 'вечерний', 'ночной', "бесконечный")),
+    is_weekend BOOLEAN DEFAULT FALSE,
+    is_active BOOLEAN DEFAULT TRUE,
+    image BLOB
+);""")
+
+
+def create_purchases():
+    SQL_request("""CREATE TABLE IF NOT EXISTS purchases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER REFERENCES users(id),
+    product TEXT,
+    product_id INTEGER,
+    quality INTEGER,
+    price DECIMAL(10,2) NOT NULL CHECK(price >= 0),
+    time_buy DATETIME DEFAULT CURRENT_TIMESTAMP,
+    status INTEGER DEFAULT 1
+);""")
+
+
+def create_computers():
+    SQL_request("""CREATE TABLE IF NOT EXISTS computers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    number_pc INTEGER,
+    token TEXT,
+    time_active CURRENT_TIMESTAMP,
+    user_active INTEGER REFERENCES users(id),
+    time_zone INTEGER DEFAULT 0,
+    status VARCHAR(20) CHECK(status IN ('активен', 'занят', 'заблокирован', "ремонт", "админ", "выключен"))
+);""")
+
+
+def create_payments():
+    SQL_request("""CREATE TABLE IF NOT EXISTS payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER REFERENCES users(id),
+    payment_id TEXT,
+    value FLOAT,
+    created_at TEXT,
+    captured_at TEXT,
+    status TEXT
+);""")
+
+
+def create_revenue_transactions():
+    SQL_request(
+        """CREATE TABLE IF NOT EXISTS revenue_transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id),
+        amount INTEGER NOT NULL,
+        payment_method TEXT CHECK(payment_method IN ('cash', 'card', 'none')),
+        kind TEXT CHECK(kind IN ('topup', 'withdraw')) NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )"""
+    )
+
+
+create_users()
+create_verification_codes()
+create_time_packages()
+create_purchases()
+create_computers()
+create_payments()
+create_revenue_transactions()

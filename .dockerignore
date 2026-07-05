@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+.git
+.github
+__pycache__
+*.pyc
+*.pyo
+*.db
+logs/
+.gitignore
+.gitattributes

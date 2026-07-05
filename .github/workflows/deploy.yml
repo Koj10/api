@@ -1,0 +1,86 @@
+name: Развертывание проекта
+
+on:
+  push:
+    tags:
+      - '*'
+  workflow_dispatch:
+    # inputs больше не нужны - используем встроенный выбор branch/tag
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }} # Используем выбранную ссылку (branch или tag)
+
+      - name: Определение версии
+        id: get-version
+        run: |
+          # Определяем, что было выбрано: branch или tag
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            # Это тег
+            VERSION=${GITHUB_REF#refs/tags/}
+            VERSION_TYPE="tag"
+          else
+            # Это ветка
+            VERSION=${GITHUB_REF#refs/heads/}
+            VERSION_TYPE="branch"
+          fi
+          
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "VERSION_TYPE=$VERSION_TYPE" >> $GITHUB_OUTPUT
+          echo "VALID=true" >> $GITHUB_OUTPUT
+
+      - name: Настройка SSH
+        if: steps.get-version.outputs.VALID == 'true'
+        env:
+          SERVER_IP: ${{ secrets.SERVER_IP }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          if [ -z "${SERVER_IP}" ]; then
+            echo "::error::Секрет SERVER_IP пустой или не задан (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+          if [ -z "${SSH_PRIVATE_KEY}" ]; then
+            echo "::error::Секрет SSH_PRIVATE_KEY пустой или не задан."
+            exit 1
+          fi
+          echo "${SSH_PRIVATE_KEY}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "${SERVER_IP}" >> ~/.ssh/known_hosts
+
+      - name: Очистка старого .env
+        if: steps.get-version.outputs.VALID == 'true'
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            rm -rf /tmp/.env
+
+      - name: Отправка .production
+        if: steps.get-version.outputs.VALID == 'true'
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: ".production"
+          target: "/tmp/.env"
+
+      - name: Деплой
+        if: steps.get-version.outputs.VALID == 'true'
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            chmod +x ~/deploy.sh
+            ~/deploy.sh ${{ github.repository_owner }} ${{ github.event.repository.name }} ${{ steps.get-version.outputs.VERSION_TYPE }} ${{ steps.get-version.outputs.VERSION }}

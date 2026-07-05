@@ -1,0 +1,9 @@
+flask
+flask_cors
+flask_mail
+gunicorn
+pytz
+flask_jwt_extended
+werkzeug
+python-dotenv
+yookassa
