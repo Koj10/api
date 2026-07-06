@@ -83,22 +83,35 @@ def buy_products(user, product_id, type_product, quality):
     return {"message":"Оплата прошла успешно"}, 200
 
 
-def add_time_to_datetime(old_time_str, time_delta_str):
-    if old_time_str is None:
-        # Берём текущее время
-        dt = datetime.now()
-    else:
-        # Парсим строку в datetime
-        dt = datetime.strptime(old_time_str, "%Y-%m-%d %H:%M:%S")
+def parse_db_datetime(value):
+    if not value:
+        return None
+    text = str(value).strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
 
-    # Разбираем интервал времени
+
+def session_time_base(computer):
+    """Точка отсчёта для продления сессии: только активная неистёкшая сессия."""
+    if computer.get("status") != "занят":
+        return None
+    dt = parse_db_datetime(computer.get("time_active"))
+    if dt is None or dt <= datetime.now():
+        return None
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def add_time_to_datetime(old_time_str, time_delta_str):
+    dt = parse_db_datetime(old_time_str) or datetime.now()
+
     hours, minutes = map(int, time_delta_str.split(':'))
     delta = timedelta(hours=hours, minutes=minutes)
-
-    # Складываем
     new_dt = dt + delta
 
-    # Возвращаем как строку
     return new_dt.strftime("%Y-%m-%d %H:%M:%S")
 
 def generate_random_token(length=32):

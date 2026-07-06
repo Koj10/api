@@ -1,9 +1,9 @@
 import secrets
 import sqlite3
 import logging
+from datetime import datetime, timedelta
 
 from database import DB_PATH
-from utils import add_time_to_datetime
 from .main_routes import *
 
 
@@ -16,7 +16,7 @@ def _ensure_pc_coupons_table():
         time_package_id INTEGER NOT NULL,
         admin_id INTEGER,
         amount INTEGER NOT NULL DEFAULT 0,
-        status TEXT DEFAULT 'active',
+        status TEXT DEFAULT 'used',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         used_at DATETIME,
         used_by_user_id INTEGER
@@ -26,16 +26,9 @@ def _ensure_pc_coupons_table():
 
 
 def _generate_coupon_code():
-    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-    for _ in range(20):
-        suffix = "".join(secrets.choice(alphabet) for _ in range(6))
-        code = f"GS-{suffix}"
-        exists = SQL_request(
-            "SELECT id FROM pc_coupons WHERE code = ?", (code,), fetch="one"
-        )
-        if not exists:
-            return code
-    return f"GS-{secrets.token_hex(3).upper()}"
+    stamp = datetime.now().strftime("%y%m%d%H%M%S")
+    suffix = secrets.token_hex(2).upper()
+    return f"ADM-{stamp}-{suffix}"
 
 
 def _coupon_date_filter(date_filter_sql):
@@ -99,20 +92,36 @@ def _coupon_aggregate(date_filter_sql, params=()):
         return 0
 
 
-def _activate_package_on_pc(computer, package, user_id, conn=None):
-    minutes = int(package["duration_minutes"])
-    hours = minutes // 60
-    remaining_minutes = minutes % 60
-    formatted_time = f"{hours}:{remaining_minutes:02d}"
-    time = add_time_to_datetime(computer.get("time_active"), formatted_time)
-    query = (
-        "UPDATE computers SET status = 'занят', time_active = ?, user_active = ? WHERE id = ?"
-    )
-    params = (time, user_id, computer["id"])
-    if conn:
-        conn.execute(query, params)
+def _activate_package_on_pc(computer, package, user_id=None, db=None):
+    """Запускает сессию: счётчик = длительность пакета с момента активации."""
+    duration_minutes = int(package["duration_minutes"])
+    started_at = datetime.now()
+    ends_at = started_at + timedelta(minutes=duration_minutes)
+    started_str = started_at.strftime("%Y-%m-%d %H:%M:%S")
+    ends_str = ends_at.strftime("%Y-%m-%d %H:%M:%S")
+
+    query = """
+        UPDATE computers
+        SET status = 'занят',
+            session_started_at = ?,
+            session_duration_minutes = ?,
+            time_active = ?,
+            user_active = ?
+        WHERE id = ?
+    """
+    params = (started_str, duration_minutes, ends_str, user_id, computer["id"])
+    if db is not None:
+        db.execute(query, params)
+        if db.rowcount == 0:
+            raise ValueError(f"ПК id={computer['id']} не обновлён")
     else:
         SQL_request(query, params=params, fetch="none")
+
+    return {
+        "session_started_at": started_str,
+        "session_duration_minutes": duration_minutes,
+        "time_active": ends_str,
+    }
 
 
 @api.route("/admin/coupons", methods=["GET"])
@@ -124,15 +133,13 @@ def list_coupons():
         """
         SELECT
             c.id, c.code, c.amount, c.status, c.created_at, c.used_at,
-            comp.number_pc, comp.id AS computer_id,
+            comp.number_pc, comp.id AS computer_id, comp.time_active,
             tp.name AS package_name, tp.id AS time_package_id,
-            a.first_name AS admin_first_name, a.last_name AS admin_last_name,
-            u.first_name AS used_first_name, u.last_name AS used_last_name
+            a.first_name AS admin_first_name, a.last_name AS admin_last_name
         FROM pc_coupons c
         LEFT JOIN computers comp ON comp.id = c.computer_id
         LEFT JOIN time_packages tp ON tp.id = c.time_package_id
         LEFT JOIN users a ON a.id = c.admin_id
-        LEFT JOIN users u ON u.id = c.used_by_user_id
         ORDER BY datetime(c.created_at) DESC
         LIMIT ?
         """,
@@ -163,7 +170,7 @@ def create_coupon():
         return jsonify({"error": "Компьютер не найден"}), 404
 
     package = SQL_request(
-        "SELECT id, name, price, duration_minutes, is_active FROM time_packages WHERE id = ?",
+        "SELECT * FROM time_packages WHERE id = ?",
         (time_package_id,),
         fetch="one",
     )
@@ -179,10 +186,11 @@ def create_coupon():
     conn = sqlite3.connect(DB_PATH)
     try:
         cur = conn.cursor()
+        session = _activate_package_on_pc(computer, package, user_id=None, db=cur)
         cur.execute(
             """INSERT INTO pc_coupons
-               (code, computer_id, time_package_id, admin_id, amount, status)
-               VALUES (?, ?, ?, ?, ?, 'active')""",
+               (code, computer_id, time_package_id, admin_id, amount, status, used_at)
+               VALUES (?, ?, ?, ?, ?, 'used', CURRENT_TIMESTAMP)""",
             (code, computer_id, time_package_id, admin_id, amount),
         )
         coupon_id = cur.lastrowid
@@ -191,91 +199,24 @@ def create_coupon():
         conn.rollback()
         logging.exception("create_coupon: %s", e)
         return jsonify({"error": "Ошибка базы данных"}), 500
+    except Exception as e:
+        conn.rollback()
+        logging.exception("create_coupon activate: %s", e)
+        return jsonify({"error": "Не удалось активировать пакет на ПК"}), 500
     finally:
         conn.close()
 
     return jsonify(
         {
-            "message": "Купон выдан",
+            "message": "Пакет активирован на ПК",
             "id": coupon_id,
             "code": code,
             "computer_id": computer_id,
             "number_pc": computer.get("number_pc"),
             "package_name": package.get("name"),
             "amount": amount,
+            "session_started_at": session["session_started_at"],
+            "session_duration_minutes": session["session_duration_minutes"],
+            "time_active": session["time_active"],
         }
     ), 201
-
-
-@api.route("/coupons/redeem", methods=["POST"])
-@auth_decorator()
-def redeem_coupon():
-    _ensure_pc_coupons_table()
-    data = request.get_json(silent=True) or {}
-    code = str(data.get("code", "")).strip().upper()
-    token = data.get("token")
-
-    if not code:
-        return jsonify({"error": "Введите код купона"}), 400
-    if not token:
-        return jsonify({"error": "Активация возможна только с компьютера клуба"}), 400
-
-    coupon = SQL_request(
-        "SELECT * FROM pc_coupons WHERE code = ? AND status = 'active'",
-        (code,),
-        fetch="one",
-    )
-    if not coupon:
-        return jsonify({"error": "Купон не найден или уже использован"}), 404
-
-    computer = SQL_request(
-        "SELECT * FROM computers WHERE token = ?", (token,), fetch="one"
-    )
-    if not computer:
-        return jsonify({"error": "Компьютер не найден"}), 404
-    if int(computer["id"]) != int(coupon["computer_id"]):
-        target = SQL_request(
-            "SELECT number_pc FROM computers WHERE id = ?",
-            (coupon["computer_id"],),
-            fetch="one",
-        )
-        pc_label = target.get("number_pc") if target else coupon["computer_id"]
-        return jsonify({"error": f"Купон действует только на ПК №{pc_label}"}), 403
-
-    package = SQL_request(
-        "SELECT * FROM time_packages WHERE id = ?",
-        (coupon["time_package_id"],),
-        fetch="one",
-    )
-    if not package:
-        return jsonify({"error": "Пакет купона не найден"}), 404
-
-    user_id = g.user["id"]
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        cur = conn.cursor()
-        _activate_package_on_pc(computer, package, user_id, conn=conn)
-        cur.execute(
-            """UPDATE pc_coupons
-               SET status = 'used', used_at = CURRENT_TIMESTAMP, used_by_user_id = ?
-               WHERE id = ? AND status = 'active'""",
-            (user_id, coupon["id"]),
-        )
-        if cur.rowcount == 0:
-            conn.rollback()
-            return jsonify({"error": "Купон уже использован"}), 409
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        logging.exception("redeem_coupon: %s", e)
-        return jsonify({"error": "Не удалось активировать купон"}), 500
-    finally:
-        conn.close()
-
-    return jsonify(
-        {
-            "message": "Купон активирован",
-            "package": package.get("name"),
-            "number_pc": computer.get("number_pc"),
-        }
-    ), 200

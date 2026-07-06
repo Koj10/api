@@ -127,10 +127,29 @@ def create_computers():
     number_pc INTEGER,
     token TEXT,
     time_active CURRENT_TIMESTAMP,
+    session_started_at TEXT,
+    session_duration_minutes INTEGER,
     user_active INTEGER REFERENCES users(id),
     time_zone INTEGER DEFAULT 0,
     status VARCHAR(20) CHECK(status IN ('активен', 'занят', 'заблокирован', "ремонт", "админ", "выключен"))
 );""")
+    columns = {
+        row["name"]
+        for row in (SQL_request("PRAGMA table_info(computers)", fetch="all") or [])
+    }
+    if "session_started_at" not in columns:
+        try:
+            SQL_request("ALTER TABLE computers ADD COLUMN session_started_at TEXT", fetch="none")
+        except Exception:
+            pass
+    if "session_duration_minutes" not in columns:
+        try:
+            SQL_request(
+                "ALTER TABLE computers ADD COLUMN session_duration_minutes INTEGER",
+                fetch="none",
+            )
+        except Exception:
+            pass
 
 
 def create_payments():

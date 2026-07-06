@@ -235,7 +235,7 @@ def activate_product():
     remaining_minutes = minutes % 60
     formatted_time = f"{hours}:{remaining_minutes:02d}"
 
-    time = add_time_to_datetime(computer["time_active"], formatted_time)
+    time = add_time_to_datetime(session_time_base(computer), formatted_time)
 
     SQL_request(
         "UPDATE computers SET status = 'занят', time_active = ?, user_active = ? WHERE token = ? ",

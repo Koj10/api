@@ -35,6 +35,13 @@ def edit_status():
     if status == "активен":
         time = None
         user_id = None
+        SQL_request(
+            "UPDATE computers SET status = ?, time_active = ?, user_active = ?, "
+            "session_started_at = NULL, session_duration_minutes = NULL WHERE token = ?",
+            params=(status, time, user_id, token),
+            fetch="none",
+        )
+        return jsonify({"message": "Статус изменён"}), 200
     elif getattr(g, 'user', None) and g.user.get('role') == 'user':
         if status not in unlock_status:
             return jsonify({"error":"Доступ запрещён"}), 403
@@ -43,7 +50,11 @@ def edit_status():
         user_id = computer.get('user_active')
 
     try:
-        SQL_request("UPDATE computers SET status = ?, time_active = ?, user_active = ? WHERE token = ? ", params=(status, time, user_id, token), fetch='none')
+        SQL_request(
+            "UPDATE computers SET status = ?, time_active = ?, user_active = ? WHERE token = ?",
+            params=(status, time, user_id, token),
+            fetch="none",
+        )
         return jsonify({"message":"Статус изменён"}), 200
     except Exception as e:
         logging.error(e)
