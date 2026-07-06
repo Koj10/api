@@ -120,6 +120,25 @@ def payments_status():
                         params=(new_balance, payment_data["user_id"]), 
                         fetch='none'
                     )
+
+                    SQL_request(
+                        """CREATE TABLE IF NOT EXISTS revenue_transactions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER REFERENCES users(id),
+                        admin_id INTEGER REFERENCES users(id),
+                        amount INTEGER NOT NULL,
+                        payment_method TEXT CHECK(payment_method IN ('cash', 'card', 'online', 'none')),
+                        kind TEXT CHECK(kind IN ('topup', 'withdraw')) NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )""",
+                        fetch="none",
+                    )
+                    SQL_request(
+                        """INSERT INTO revenue_transactions (user_id, amount, payment_method, kind)
+                           VALUES (?, ?, 'online', 'topup')""",
+                        params=(payment_data["user_id"], int(round(payment_value))),
+                        fetch="none",
+                    )
                     
                     logging.info(f"Баланс пользователя {payment_data['user_id']} пополнен на {payment_value}")
         

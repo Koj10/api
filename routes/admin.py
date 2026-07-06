@@ -44,13 +44,164 @@ def _ensure_revenue_transactions_table():
         """CREATE TABLE IF NOT EXISTS revenue_transactions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER REFERENCES users(id),
+        admin_id INTEGER REFERENCES users(id),
         amount INTEGER NOT NULL,
-        payment_method TEXT CHECK(payment_method IN ('cash', 'card', 'none')),
+        payment_method TEXT CHECK(payment_method IN ('cash', 'card', 'online', 'none')),
         kind TEXT CHECK(kind IN ('topup', 'withdraw')) NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )""",
         fetch="none",
     )
+    columns = {
+        row["name"]
+        for row in (SQL_request("PRAGMA table_info(revenue_transactions)", fetch="all") or [])
+    }
+    if "admin_id" not in columns:
+        try:
+            SQL_request(
+                "ALTER TABLE revenue_transactions ADD COLUMN admin_id INTEGER REFERENCES users(id)",
+                fetch="none",
+            )
+        except Exception:
+            pass
+
+
+def _get_transactions(rt_filter, pay_filter, params=()):
+    _ensure_revenue_transactions_table()
+    columns = {
+        row["name"]
+        for row in (SQL_request("PRAGMA table_info(revenue_transactions)", fetch="all") or [])
+    }
+    admin_join = "LEFT JOIN users a ON a.id = rt.admin_id" if "admin_id" in columns else ""
+    admin_select = (
+        "a.first_name AS admin_first_name, a.last_name AS admin_last_name"
+        if "admin_id" in columns
+        else "NULL AS admin_first_name, NULL AS admin_last_name"
+    )
+
+    manual = SQL_request(
+        f"""
+        SELECT
+            rt.id,
+            rt.created_at,
+            rt.amount,
+            rt.kind,
+            rt.payment_method,
+            u.first_name,
+            u.last_name,
+            u.email,
+            {admin_select}
+        FROM revenue_transactions rt
+        LEFT JOIN users u ON u.id = rt.user_id
+        {admin_join}
+        WHERE {rt_filter}
+        ORDER BY datetime(rt.created_at) DESC
+        LIMIT 500
+        """,
+        params=params,
+        fetch="all",
+    ) or []
+
+    online = SQL_request(
+        f"""
+        SELECT
+            p.id,
+            COALESCE(p.captured_at, p.created_at) AS created_at,
+            CAST(p.value AS INTEGER) AS amount,
+            'topup' AS kind,
+            'online' AS payment_method,
+            u.first_name,
+            u.last_name,
+            u.email,
+            NULL AS admin_first_name,
+            NULL AS admin_last_name
+        FROM payments p
+        LEFT JOIN users u ON u.id = p.user_id
+        WHERE p.status = 'succeeded' AND {pay_filter}
+          AND NOT EXISTS (
+            SELECT 1 FROM revenue_transactions rt
+            WHERE rt.user_id = p.user_id
+              AND rt.payment_method = 'online'
+              AND rt.amount = CAST(p.value AS INTEGER)
+              AND date(rt.created_at) = date(COALESCE(p.captured_at, p.created_at))
+          )
+        ORDER BY datetime(COALESCE(p.captured_at, p.created_at)) DESC
+        LIMIT 500
+        """,
+        params=params,
+        fetch="all",
+    ) or []
+
+    items = list(manual)
+    items.extend(online)
+    items.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+    return items
+
+
+def _parse_report_dates():
+    date_from = request.args.get("date_from") or request.args.get("from")
+    date_to = request.args.get("date_to") or request.args.get("to")
+    return date_from, date_to
+
+
+def _revenue_cc_aggregate(date_filter_sql, params=()):
+    _ensure_revenue_transactions_table()
+    return SQL_request(
+        f"""
+        SELECT
+            COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END), 0) AS cash,
+            COALESCE(SUM(CASE WHEN payment_method = 'card' THEN amount ELSE 0 END), 0) AS card
+        FROM revenue_transactions
+        WHERE kind = 'topup' AND {date_filter_sql}
+        """,
+        params=params,
+        fetch="one",
+    )
+
+
+def _revenue_online_aggregate(date_filter_sql, params=()):
+    return SQL_request(
+        f"""
+        SELECT COALESCE(SUM(value), 0) AS online
+        FROM payments
+        WHERE status = 'succeeded' AND {date_filter_sql}
+        """,
+        params=params,
+        fetch="one",
+    )
+
+
+def _merge_topup(cc_row, online_row):
+    cash = int(cc_row.get("cash") or 0)
+    card = int(cc_row.get("card") or 0)
+    online = int(online_row.get("online") or 0)
+    return {
+        "cash": cash,
+        "card": card,
+        "online": online,
+        "total": cash + card + online,
+    }
+
+
+def _period_bounds(period):
+    if period == "today":
+        return "date(created_at) = date('now')", ()
+    if period == "week":
+        return "datetime(created_at) >= datetime('now', '-7 days')", ()
+    if period == "month":
+        return "datetime(created_at) >= datetime('now', '-30 days')", ()
+    return None, None
+
+
+def _range_bounds(date_from, date_to):
+    return (
+        "date(created_at) >= date(?) AND date(created_at) <= date(?)",
+        (date_from, date_to),
+    )
+
+
+def _payments_date_filter(date_filter_sql):
+    return date_filter_sql.replace("created_at", "COALESCE(captured_at, created_at)")
 
 
 @api.route("/admin/balance", methods=["POST"])
@@ -105,6 +256,7 @@ def admin_balance_adjust():
             return jsonify({"error": "Итоговый баланс не может быть отрицательным"}), 400
 
     new_balance = None
+    admin_id = getattr(g, "user", {}).get("id")
     conn = sqlite3.connect(DB_PATH)
     try:
         cur = conn.cursor()
@@ -130,9 +282,9 @@ def admin_balance_adjust():
                     (new_balance, user_id),
                 )
                 cur.execute(
-                    """INSERT INTO revenue_transactions (user_id, amount, payment_method, kind)
-                       VALUES (?, ?, ?, 'topup')""",
-                    (user_id, delta, payment_method),
+                    """INSERT INTO revenue_transactions (user_id, admin_id, amount, payment_method, kind)
+                       VALUES (?, ?, ?, ?, 'topup')""",
+                    (user_id, admin_id, delta, payment_method),
                 )
             else:
                 if target_balance > current:
@@ -150,9 +302,9 @@ def admin_balance_adjust():
                     (new_balance, user_id),
                 )
                 cur.execute(
-                    """INSERT INTO revenue_transactions (user_id, amount, payment_method, kind)
-                       VALUES (?, ?, 'none', 'withdraw')""",
-                    (user_id, delta),
+                    """INSERT INTO revenue_transactions (user_id, admin_id, amount, payment_method, kind)
+                       VALUES (?, ?, ?, 'none', 'withdraw')""",
+                    (user_id, admin_id, delta),
                 )
         elif operation == "add":
             new_balance = current + amount_delta
@@ -161,9 +313,9 @@ def admin_balance_adjust():
                 (new_balance, user_id),
             )
             cur.execute(
-                """INSERT INTO revenue_transactions (user_id, amount, payment_method, kind)
-                   VALUES (?, ?, ?, 'topup')""",
-                (user_id, amount_delta, payment_method),
+                """INSERT INTO revenue_transactions (user_id, admin_id, amount, payment_method, kind)
+                   VALUES (?, ?, ?, ?, 'topup')""",
+                (user_id, admin_id, amount_delta, payment_method),
             )
         else:
             new_balance = max(0, current - amount_delta)
@@ -173,9 +325,9 @@ def admin_balance_adjust():
                 (new_balance, user_id),
             )
             cur.execute(
-                """INSERT INTO revenue_transactions (user_id, amount, payment_method, kind)
-                   VALUES (?, ?, 'none', 'withdraw')""",
-                (user_id, withdrawn),
+                """INSERT INTO revenue_transactions (user_id, admin_id, amount, payment_method, kind)
+                   VALUES (?, ?, ?, 'none', 'withdraw')""",
+                (user_id, admin_id, withdrawn),
             )
         conn.commit()
     except sqlite3.Error as e:
@@ -191,102 +343,131 @@ def admin_balance_adjust():
 @api.route("/admin/revenue", methods=["GET"])
 @auth_decorator("admin")
 def admin_revenue():
-    pay_today = SQL_request(
-        """
-        SELECT COALESCE(SUM(value), 0) AS online
-        FROM payments
-        WHERE status = 'succeeded' AND date(COALESCE(captured_at, created_at)) = date('now')
-        """,
-        fetch="one",
-    )
-    pay_week = SQL_request(
-        """
-        SELECT COALESCE(SUM(value), 0) AS online
-        FROM payments
-        WHERE status = 'succeeded'
-          AND datetime(COALESCE(captured_at, created_at)) >= datetime('now', '-7 days')
-        """,
-        fetch="one",
-    )
-    pay_month = SQL_request(
-        """
-        SELECT COALESCE(SUM(value), 0) AS online
-        FROM payments
-        WHERE status = 'succeeded'
-          AND datetime(COALESCE(captured_at, created_at)) >= datetime('now', '-30 days')
-        """,
-        fetch="one",
-    )
+    try:
+        _ensure_revenue_transactions_table()
+        date_from, date_to = _parse_report_dates()
 
-    def merge_topup(base, online_row):
-        o = int(online_row.get("online") or 0)
-        cc_total = base["cash"] + base["card"]
-        return {
-            "cash": base["cash"],
-            "card": base["card"],
-            "online": o,
-            "total": cc_total + o,
-        }
+        if date_from and date_to:
+            rt_filter, rt_params = _range_bounds(date_from, date_to)
+            pay_filter = _payments_date_filter(rt_filter)
+            custom = _merge_topup(
+                _revenue_cc_aggregate(rt_filter, rt_params),
+                _revenue_online_aggregate(pay_filter, rt_params),
+            )
+            return jsonify({"custom": custom, "date_from": date_from, "date_to": date_to}), 200
 
-    cc_today = SQL_request(
-        """
-        SELECT
-            COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END), 0) AS cash,
-            COALESCE(SUM(CASE WHEN payment_method = 'card' THEN amount ELSE 0 END), 0) AS card
-        FROM revenue_transactions
-        WHERE kind = 'topup' AND date(created_at) = date('now')
-        """,
-        fetch="one",
-    )
-    cc_week = SQL_request(
-        """
-        SELECT
-            COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END), 0) AS cash,
-            COALESCE(SUM(CASE WHEN payment_method = 'card' THEN amount ELSE 0 END), 0) AS card
-        FROM revenue_transactions
-        WHERE kind = 'topup' AND datetime(created_at) >= datetime('now', '-7 days')
-        """,
-        fetch="one",
-    )
-    cc_month = SQL_request(
-        """
-        SELECT
-            COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END), 0) AS cash,
-            COALESCE(SUM(CASE WHEN payment_method = 'card' THEN amount ELSE 0 END), 0) AS card
-        FROM revenue_transactions
-        WHERE kind = 'topup' AND datetime(created_at) >= datetime('now', '-30 days')
-        """,
-        fetch="one",
-    )
+        today = _merge_topup(
+            _revenue_cc_aggregate(*_period_bounds("today")),
+            _revenue_online_aggregate(_payments_date_filter(_period_bounds("today")[0])),
+        )
+        week = _merge_topup(
+            _revenue_cc_aggregate(*_period_bounds("week")),
+            _revenue_online_aggregate(_payments_date_filter(_period_bounds("week")[0])),
+        )
+        month = _merge_topup(
+            _revenue_cc_aggregate(*_period_bounds("month")),
+            _revenue_online_aggregate(_payments_date_filter(_period_bounds("month")[0])),
+        )
 
-    return (
-        jsonify(
-            {
-                "today": merge_topup(
-                    {
-                        "cash": int(cc_today.get("cash") or 0),
-                        "card": int(cc_today.get("card") or 0),
-                    },
-                    pay_today,
-                ),
-                "week": merge_topup(
-                    {
-                        "cash": int(cc_week.get("cash") or 0),
-                        "card": int(cc_week.get("card") or 0),
-                    },
-                    pay_week,
-                ),
-                "month": merge_topup(
-                    {
-                        "cash": int(cc_month.get("cash") or 0),
-                        "card": int(cc_month.get("card") or 0),
-                    },
-                    pay_month,
-                ),
-            }
-        ),
-        200,
-    )
+        return jsonify({"today": today, "week": week, "month": month}), 200
+    except Exception as e:
+        logging.exception("admin_revenue: %s", e)
+        return jsonify({"error": "Ошибка формирования отчёта"}), 500
+
+
+@api.route("/admin/revenue/report", methods=["GET"])
+@auth_decorator("admin")
+def admin_revenue_report():
+    try:
+        _ensure_revenue_transactions_table()
+        date_from, date_to = _parse_report_dates()
+        period = request.args.get("period", "today")
+        bootstrap = request.args.get("bootstrap") in ("1", "true", "yes")
+
+        if date_from and date_to:
+            rt_filter, params = _range_bounds(date_from, date_to)
+            pay_filter = _payments_date_filter(rt_filter)
+            summary = _merge_topup(
+                _revenue_cc_aggregate(rt_filter, params),
+                _revenue_online_aggregate(pay_filter, params),
+            )
+            transactions = _get_transactions(rt_filter, pay_filter, params)
+            return jsonify(
+                {
+                    "period": "custom",
+                    "date_from": date_from,
+                    "date_to": date_to,
+                    "summary": summary,
+                    "transactions": transactions,
+                }
+            ), 200
+
+        if bootstrap:
+            today = _merge_topup(
+                _revenue_cc_aggregate(*_period_bounds("today")),
+                _revenue_online_aggregate(_payments_date_filter(_period_bounds("today")[0])),
+            )
+            week = _merge_topup(
+                _revenue_cc_aggregate(*_period_bounds("week")),
+                _revenue_online_aggregate(_payments_date_filter(_period_bounds("week")[0])),
+            )
+            month = _merge_topup(
+                _revenue_cc_aggregate(*_period_bounds("month")),
+                _revenue_online_aggregate(_payments_date_filter(_period_bounds("month")[0])),
+            )
+            rt_filter, params = _period_bounds("today")
+            pay_filter = _payments_date_filter(rt_filter)
+            transactions = _get_transactions(rt_filter, pay_filter, params)
+            return jsonify(
+                {
+                    "period": "today",
+                    "today": today,
+                    "week": week,
+                    "month": month,
+                    "summary": today,
+                    "transactions": transactions,
+                }
+            ), 200
+
+        if period not in ("today", "week", "month"):
+            period = "today"
+
+        rt_filter, params = _period_bounds(period)
+        pay_filter = _payments_date_filter(rt_filter)
+        summary = _merge_topup(
+            _revenue_cc_aggregate(rt_filter, params),
+            _revenue_online_aggregate(pay_filter, params),
+        )
+        transactions = _get_transactions(rt_filter, pay_filter, params)
+        return jsonify(
+            {"period": period, "summary": summary, "transactions": transactions}
+        ), 200
+    except Exception as e:
+        logging.exception("admin_revenue_report: %s", e)
+        return jsonify({"error": "Ошибка формирования отчёта"}), 500
+
+
+@api.route("/admin/revenue/transactions", methods=["GET"])
+@auth_decorator("admin")
+def admin_revenue_transactions():
+    try:
+        _ensure_revenue_transactions_table()
+
+        period = request.args.get("period")
+        date_from, date_to = _parse_report_dates()
+
+        if date_from and date_to:
+            rt_filter, params = _range_bounds(date_from, date_to)
+        elif period in ("today", "week", "month"):
+            rt_filter, params = _period_bounds(period)
+        else:
+            rt_filter, params = _period_bounds("today")
+
+        pay_filter = _payments_date_filter(rt_filter)
+        return jsonify(_get_transactions(rt_filter, pay_filter, params)), 200
+    except Exception as e:
+        logging.exception("admin_revenue_transactions: %s", e)
+        return jsonify({"error": "Ошибка загрузки операций"}), 500
 
 
 @api.route('/time_packages/add', methods=['POST'])

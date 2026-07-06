@@ -42,7 +42,7 @@ def images(type_product, id_product):
         image_stream = io.BytesIO(blob_data)
 
         # Отправляем изображение как WebP
-        return send_file(image_stream, mimetype='image/webp'), 200
+        return send_file(image_stream, mimetype='image/webp', max_age=86400), 200
 
     except Exception as e:
         print(e)

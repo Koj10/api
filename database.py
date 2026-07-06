@@ -150,8 +150,9 @@ def create_revenue_transactions():
         """CREATE TABLE IF NOT EXISTS revenue_transactions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER REFERENCES users(id),
+        admin_id INTEGER REFERENCES users(id),
         amount INTEGER NOT NULL,
-        payment_method TEXT CHECK(payment_method IN ('cash', 'card', 'none')),
+        payment_method TEXT CHECK(payment_method IN ('cash', 'card', 'online', 'none')),
         kind TEXT CHECK(kind IN ('topup', 'withdraw')) NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )"""
