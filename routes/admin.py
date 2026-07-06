@@ -168,6 +168,11 @@ def _get_transactions(rt_filter, pay_filter, params=()):
 
     items = list(manual)
     items.extend(online)
+    try:
+        from .coupons import _get_coupon_transactions
+        items.extend(_get_coupon_transactions(rt_filter, params))
+    except Exception as e:
+        logging.warning("_get_transactions coupons: %s", e)
     items.sort(key=lambda x: x.get("created_at") or "", reverse=True)
     return items
 
@@ -262,17 +267,19 @@ def _payments_date_filter(date_filter_sql):
     return date_filter_sql.replace("created_at", expr)
 
 
-def _merge_topup(cc_row, online_row):
+def _merge_topup(cc_row, online_row, coupons=0):
     cc_row = cc_row or {}
     online_row = online_row or {}
     cash = int(cc_row.get("cash") or 0)
     card = int(cc_row.get("card") or 0)
     online = int(online_row.get("online") or 0)
+    coupons = int(coupons or 0)
     return {
         "cash": cash,
         "card": card,
         "online": online,
-        "total": cash + card + online,
+        "coupons": coupons,
+        "total": cash + card + online + coupons,
     }
 
 
@@ -290,6 +297,19 @@ def _range_bounds(date_from, date_to):
     return (
         "date(created_at) >= date(?) AND date(created_at) <= date(?)",
         (date_from, date_to),
+    )
+
+
+def _build_period_summary(rt_filter, params=()):
+    try:
+        from .coupons import _coupon_aggregate
+        coupons = _coupon_aggregate(rt_filter, params)
+    except Exception:
+        coupons = 0
+    return _merge_topup(
+        _revenue_cc_aggregate(rt_filter, params),
+        _revenue_online_aggregate(rt_filter, params),
+        coupons,
     )
 
 
@@ -439,24 +459,12 @@ def admin_revenue():
         if date_from and date_to:
             rt_filter, rt_params = _range_bounds(date_from, date_to)
             pay_filter = _payments_date_filter(rt_filter)
-            custom = _merge_topup(
-                _revenue_cc_aggregate(rt_filter, rt_params),
-                _revenue_online_aggregate(rt_filter, rt_params),
-            )
+            custom = _build_period_summary(rt_filter, rt_params)
             return jsonify({"custom": custom, "date_from": date_from, "date_to": date_to}), 200
 
-        today = _merge_topup(
-            _revenue_cc_aggregate(*_period_bounds("today")),
-            _revenue_online_aggregate(_period_bounds("today")[0]),
-        )
-        week = _merge_topup(
-            _revenue_cc_aggregate(*_period_bounds("week")),
-            _revenue_online_aggregate(_period_bounds("week")[0]),
-        )
-        month = _merge_topup(
-            _revenue_cc_aggregate(*_period_bounds("month")),
-            _revenue_online_aggregate(_period_bounds("month")[0]),
-        )
+        today = _build_period_summary(*_period_bounds("today"))
+        week = _build_period_summary(*_period_bounds("week"))
+        month = _build_period_summary(*_period_bounds("month"))
 
         return jsonify({"today": today, "week": week, "month": month}), 200
     except Exception as e:
@@ -476,10 +484,7 @@ def admin_revenue_report():
         if date_from and date_to:
             rt_filter, params = _range_bounds(date_from, date_to)
             pay_filter = _payments_date_filter(rt_filter)
-            summary = _merge_topup(
-                _revenue_cc_aggregate(rt_filter, params),
-                _revenue_online_aggregate(rt_filter, params),
-            )
+            summary = _build_period_summary(rt_filter, params)
             transactions = _get_transactions(rt_filter, pay_filter, params)
             return jsonify(
                 {
@@ -492,18 +497,9 @@ def admin_revenue_report():
             ), 200
 
         if bootstrap:
-            today = _merge_topup(
-                _revenue_cc_aggregate(*_period_bounds("today")),
-                _revenue_online_aggregate(_period_bounds("today")[0]),
-            )
-            week = _merge_topup(
-                _revenue_cc_aggregate(*_period_bounds("week")),
-                _revenue_online_aggregate(_period_bounds("week")[0]),
-            )
-            month = _merge_topup(
-                _revenue_cc_aggregate(*_period_bounds("month")),
-                _revenue_online_aggregate(_period_bounds("month")[0]),
-            )
+            today = _build_period_summary(*_period_bounds("today"))
+            week = _build_period_summary(*_period_bounds("week"))
+            month = _build_period_summary(*_period_bounds("month"))
             rt_filter, params = _period_bounds("today")
             pay_filter = _payments_date_filter(rt_filter)
             transactions = _get_transactions(rt_filter, pay_filter, params)
@@ -523,10 +519,7 @@ def admin_revenue_report():
 
         rt_filter, params = _period_bounds(period)
         pay_filter = _payments_date_filter(rt_filter)
-        summary = _merge_topup(
-            _revenue_cc_aggregate(rt_filter, params),
-            _revenue_online_aggregate(rt_filter, params),
-        )
+        summary = _build_period_summary(rt_filter, params)
         transactions = _get_transactions(rt_filter, pay_filter, params)
         return jsonify(
             {"period": period, "summary": summary, "transactions": transactions}

@@ -4,3 +4,4 @@ from .time_packages import *
 from .admin import *
 from .computers import *
 from .payments import *
+from .coupons import *

@@ -168,6 +168,23 @@ def create_revenue_transactions():
     )
 
 
+def create_pc_coupons():
+    SQL_request(
+        """CREATE TABLE IF NOT EXISTS pc_coupons (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL UNIQUE,
+        computer_id INTEGER NOT NULL,
+        time_package_id INTEGER NOT NULL,
+        admin_id INTEGER,
+        amount INTEGER NOT NULL DEFAULT 0,
+        status TEXT DEFAULT 'active',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        used_at DATETIME,
+        used_by_user_id INTEGER
+    )"""
+    )
+
+
 create_users()
 create_verification_codes()
 create_time_packages()
@@ -175,3 +192,4 @@ create_purchases()
 create_computers()
 create_payments()
 create_revenue_transactions()
+create_pc_coupons()
