@@ -38,6 +38,16 @@ def profiles():
     return jsonify(user), 200
 
 
+def _revenue_table_columns():
+    try:
+        return {
+            row["name"]
+            for row in (SQL_request("PRAGMA table_info(revenue_transactions)", fetch="all") or [])
+        }
+    except Exception:
+        return set()
+
+
 def _ensure_revenue_transactions_table():
     """На старых БД таблицы могло не быть — иначе INSERT ломает пополнение."""
     SQL_request(
@@ -46,94 +56,115 @@ def _ensure_revenue_transactions_table():
         user_id INTEGER REFERENCES users(id),
         admin_id INTEGER REFERENCES users(id),
         amount INTEGER NOT NULL,
-        payment_method TEXT CHECK(payment_method IN ('cash', 'card', 'online', 'none')),
-        kind TEXT CHECK(kind IN ('topup', 'withdraw')) NOT NULL,
+        payment_method TEXT,
+        kind TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )""",
         fetch="none",
     )
-    columns = {
-        row["name"]
-        for row in (SQL_request("PRAGMA table_info(revenue_transactions)", fetch="all") or [])
-    }
-    if "admin_id" not in columns:
-        try:
-            SQL_request(
-                "ALTER TABLE revenue_transactions ADD COLUMN admin_id INTEGER REFERENCES users(id)",
-                fetch="none",
-            )
-        except Exception:
-            pass
+    columns = _revenue_table_columns()
+    migrations = [
+        ("admin_id", "ALTER TABLE revenue_transactions ADD COLUMN admin_id INTEGER"),
+        ("kind", "ALTER TABLE revenue_transactions ADD COLUMN kind TEXT DEFAULT 'topup'"),
+        ("payment_method", "ALTER TABLE revenue_transactions ADD COLUMN payment_method TEXT DEFAULT 'cash'"),
+        ("created_at", "ALTER TABLE revenue_transactions ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP"),
+    ]
+    for column, ddl in migrations:
+        if column not in columns:
+            try:
+                SQL_request(ddl, fetch="none")
+            except Exception:
+                pass
+            columns = _revenue_table_columns()
+
+
+def _revenue_kind_clause(columns, alias=""):
+    prefix = f"{alias}." if alias else ""
+    if "kind" in columns:
+        return f"{prefix}kind = 'topup' AND "
+    return ""
 
 
 def _get_transactions(rt_filter, pay_filter, params=()):
     _ensure_revenue_transactions_table()
-    columns = {
-        row["name"]
-        for row in (SQL_request("PRAGMA table_info(revenue_transactions)", fetch="all") or [])
-    }
+    columns = _revenue_table_columns()
     admin_join = "LEFT JOIN users a ON a.id = rt.admin_id" if "admin_id" in columns else ""
     admin_select = (
         "a.first_name AS admin_first_name, a.last_name AS admin_last_name"
         if "admin_id" in columns
         else "NULL AS admin_first_name, NULL AS admin_last_name"
     )
+    kind_select = "rt.kind" if "kind" in columns else "'topup' AS kind"
+    pm_select = "rt.payment_method" if "payment_method" in columns else "'cash' AS payment_method"
 
-    manual = SQL_request(
-        f"""
-        SELECT
-            rt.id,
-            rt.created_at,
-            rt.amount,
-            rt.kind,
-            rt.payment_method,
-            u.first_name,
-            u.last_name,
-            u.email,
-            {admin_select}
-        FROM revenue_transactions rt
-        LEFT JOIN users u ON u.id = rt.user_id
-        {admin_join}
-        WHERE {rt_filter}
-        ORDER BY datetime(rt.created_at) DESC
-        LIMIT 500
-        """,
-        params=params,
-        fetch="all",
-    ) or []
-
-    online = []
-    if _payments_table_exists():
-        ts_expr = _payments_timestamp_expr() or "created_at"
-        online = SQL_request(
+    manual = []
+    try:
+        manual = SQL_request(
             f"""
             SELECT
-                p.id,
-                {ts_expr} AS created_at,
-                CAST(p.value AS INTEGER) AS amount,
-                'topup' AS kind,
-                'online' AS payment_method,
+                rt.id,
+                rt.created_at,
+                rt.amount,
+                {kind_select},
+                {pm_select},
                 u.first_name,
                 u.last_name,
                 u.email,
-                NULL AS admin_first_name,
-                NULL AS admin_last_name
-            FROM payments p
-            LEFT JOIN users u ON u.id = p.user_id
-            WHERE p.status = 'succeeded' AND {pay_filter}
-              AND NOT EXISTS (
-                SELECT 1 FROM revenue_transactions rt
-                WHERE rt.user_id = p.user_id
-                  AND rt.payment_method = 'online'
-                  AND rt.amount = CAST(p.value AS INTEGER)
-                  AND date(rt.created_at) = date({ts_expr})
-              )
-            ORDER BY datetime({ts_expr}) DESC
+                {admin_select}
+            FROM revenue_transactions rt
+            LEFT JOIN users u ON u.id = rt.user_id
+            {admin_join}
+            WHERE {rt_filter}
+            ORDER BY datetime(rt.created_at) DESC
             LIMIT 500
             """,
             params=params,
             fetch="all",
         ) or []
+    except Exception as e:
+        logging.warning("_get_transactions manual: %s", e)
+
+    online = []
+    if _payments_table_exists():
+        try:
+            ts_expr = _payments_timestamp_expr() or "created_at"
+            rt_cols = _revenue_table_columns()
+            online_exists = (
+                "rt.payment_method = 'online'"
+                if "payment_method" in rt_cols
+                else "1 = 0"
+            )
+            online = SQL_request(
+                f"""
+                SELECT
+                    p.id,
+                    {ts_expr} AS created_at,
+                    CAST(p.value AS INTEGER) AS amount,
+                    'topup' AS kind,
+                    'online' AS payment_method,
+                    u.first_name,
+                    u.last_name,
+                    u.email,
+                    NULL AS admin_first_name,
+                    NULL AS admin_last_name
+                FROM payments p
+                LEFT JOIN users u ON u.id = p.user_id
+                WHERE p.status = 'succeeded' AND {pay_filter}
+                  AND NOT EXISTS (
+                    SELECT 1 FROM revenue_transactions rt
+                    WHERE rt.user_id = p.user_id
+                      AND {online_exists}
+                      AND rt.amount = CAST(p.value AS INTEGER)
+                      AND date(rt.created_at) = date({ts_expr})
+                  )
+                ORDER BY datetime({ts_expr}) DESC
+                LIMIT 500
+                """,
+                params=params,
+                fetch="all",
+            ) or []
+        except Exception as e:
+            logging.warning("_get_transactions online: %s", e)
 
     items = list(manual)
     items.extend(online)
@@ -149,14 +180,26 @@ def _parse_report_dates():
 
 def _revenue_cc_aggregate(date_filter_sql, params=()):
     _ensure_revenue_transactions_table()
+    columns = _revenue_table_columns()
+    kind_clause = _revenue_kind_clause(columns)
+    pm_case = (
+        "CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END"
+        if "payment_method" in columns
+        else "CASE WHEN amount > 0 THEN amount ELSE 0 END"
+    )
+    card_case = (
+        "CASE WHEN payment_method = 'card' THEN amount ELSE 0 END"
+        if "payment_method" in columns
+        else "0"
+    )
     try:
         result = SQL_request(
             f"""
             SELECT
-                COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END), 0) AS cash,
-                COALESCE(SUM(CASE WHEN payment_method = 'card' THEN amount ELSE 0 END), 0) AS card
+                COALESCE(SUM({pm_case}), 0) AS cash,
+                COALESCE(SUM({card_case}), 0) AS card
             FROM revenue_transactions
-            WHERE kind = 'topup' AND {date_filter_sql}
+            WHERE {kind_clause}{date_filter_sql}
             """,
             params=params,
             fetch="one",
@@ -174,16 +217,20 @@ def _revenue_online_aggregate(date_filter_sql, params=()):
     if not expr:
         return {"online": 0}
     pay_filter = date_filter_sql.replace("created_at", expr)
-    result = SQL_request(
-        f"""
-        SELECT COALESCE(SUM(value), 0) AS online
-        FROM payments
-        WHERE status = 'succeeded' AND {pay_filter}
-        """,
-        params=params,
-        fetch="one",
-    )
-    return result or {"online": 0}
+    try:
+        result = SQL_request(
+            f"""
+            SELECT COALESCE(SUM(value), 0) AS online
+            FROM payments
+            WHERE status = 'succeeded' AND {pay_filter}
+            """,
+            params=params,
+            fetch="one",
+        )
+        return result or {"online": 0}
+    except Exception as e:
+        logging.warning("revenue_online_aggregate: %s", e)
+        return {"online": 0}
 
 
 def _payments_table_exists():
@@ -394,21 +441,21 @@ def admin_revenue():
             pay_filter = _payments_date_filter(rt_filter)
             custom = _merge_topup(
                 _revenue_cc_aggregate(rt_filter, rt_params),
-                _revenue_online_aggregate(pay_filter, rt_params),
+                _revenue_online_aggregate(rt_filter, rt_params),
             )
             return jsonify({"custom": custom, "date_from": date_from, "date_to": date_to}), 200
 
         today = _merge_topup(
             _revenue_cc_aggregate(*_period_bounds("today")),
-            _revenue_online_aggregate(_payments_date_filter(_period_bounds("today")[0])),
+            _revenue_online_aggregate(_period_bounds("today")[0]),
         )
         week = _merge_topup(
             _revenue_cc_aggregate(*_period_bounds("week")),
-            _revenue_online_aggregate(_payments_date_filter(_period_bounds("week")[0])),
+            _revenue_online_aggregate(_period_bounds("week")[0]),
         )
         month = _merge_topup(
             _revenue_cc_aggregate(*_period_bounds("month")),
-            _revenue_online_aggregate(_payments_date_filter(_period_bounds("month")[0])),
+            _revenue_online_aggregate(_period_bounds("month")[0]),
         )
 
         return jsonify({"today": today, "week": week, "month": month}), 200
@@ -431,7 +478,7 @@ def admin_revenue_report():
             pay_filter = _payments_date_filter(rt_filter)
             summary = _merge_topup(
                 _revenue_cc_aggregate(rt_filter, params),
-                _revenue_online_aggregate(pay_filter, params),
+                _revenue_online_aggregate(rt_filter, params),
             )
             transactions = _get_transactions(rt_filter, pay_filter, params)
             return jsonify(
@@ -447,15 +494,15 @@ def admin_revenue_report():
         if bootstrap:
             today = _merge_topup(
                 _revenue_cc_aggregate(*_period_bounds("today")),
-                _revenue_online_aggregate(_payments_date_filter(_period_bounds("today")[0])),
+                _revenue_online_aggregate(_period_bounds("today")[0]),
             )
             week = _merge_topup(
                 _revenue_cc_aggregate(*_period_bounds("week")),
-                _revenue_online_aggregate(_payments_date_filter(_period_bounds("week")[0])),
+                _revenue_online_aggregate(_period_bounds("week")[0]),
             )
             month = _merge_topup(
                 _revenue_cc_aggregate(*_period_bounds("month")),
-                _revenue_online_aggregate(_payments_date_filter(_period_bounds("month")[0])),
+                _revenue_online_aggregate(_period_bounds("month")[0]),
             )
             rt_filter, params = _period_bounds("today")
             pay_filter = _payments_date_filter(rt_filter)
@@ -478,7 +525,7 @@ def admin_revenue_report():
         pay_filter = _payments_date_filter(rt_filter)
         summary = _merge_topup(
             _revenue_cc_aggregate(rt_filter, params),
-            _revenue_online_aggregate(pay_filter, params),
+            _revenue_online_aggregate(rt_filter, params),
         )
         transactions = _get_transactions(rt_filter, pay_filter, params)
         return jsonify(
