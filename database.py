@@ -143,6 +143,15 @@ def create_payments():
     captured_at TEXT,
     status TEXT
 );""")
+    columns = {
+        row["name"]
+        for row in (SQL_request("PRAGMA table_info(payments)", fetch="all") or [])
+    }
+    if "captured_at" not in columns:
+        try:
+            SQL_request("ALTER TABLE payments ADD COLUMN captured_at TEXT", fetch="none")
+        except Exception:
+            pass
 
 
 def create_revenue_transactions():

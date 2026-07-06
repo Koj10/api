@@ -102,35 +102,38 @@ def _get_transactions(rt_filter, pay_filter, params=()):
         fetch="all",
     ) or []
 
-    online = SQL_request(
-        f"""
-        SELECT
-            p.id,
-            COALESCE(p.captured_at, p.created_at) AS created_at,
-            CAST(p.value AS INTEGER) AS amount,
-            'topup' AS kind,
-            'online' AS payment_method,
-            u.first_name,
-            u.last_name,
-            u.email,
-            NULL AS admin_first_name,
-            NULL AS admin_last_name
-        FROM payments p
-        LEFT JOIN users u ON u.id = p.user_id
-        WHERE p.status = 'succeeded' AND {pay_filter}
-          AND NOT EXISTS (
-            SELECT 1 FROM revenue_transactions rt
-            WHERE rt.user_id = p.user_id
-              AND rt.payment_method = 'online'
-              AND rt.amount = CAST(p.value AS INTEGER)
-              AND date(rt.created_at) = date(COALESCE(p.captured_at, p.created_at))
-          )
-        ORDER BY datetime(COALESCE(p.captured_at, p.created_at)) DESC
-        LIMIT 500
-        """,
-        params=params,
-        fetch="all",
-    ) or []
+    online = []
+    if _payments_table_exists():
+        ts_expr = _payments_timestamp_expr() or "created_at"
+        online = SQL_request(
+            f"""
+            SELECT
+                p.id,
+                {ts_expr} AS created_at,
+                CAST(p.value AS INTEGER) AS amount,
+                'topup' AS kind,
+                'online' AS payment_method,
+                u.first_name,
+                u.last_name,
+                u.email,
+                NULL AS admin_first_name,
+                NULL AS admin_last_name
+            FROM payments p
+            LEFT JOIN users u ON u.id = p.user_id
+            WHERE p.status = 'succeeded' AND {pay_filter}
+              AND NOT EXISTS (
+                SELECT 1 FROM revenue_transactions rt
+                WHERE rt.user_id = p.user_id
+                  AND rt.payment_method = 'online'
+                  AND rt.amount = CAST(p.value AS INTEGER)
+                  AND date(rt.created_at) = date({ts_expr})
+              )
+            ORDER BY datetime({ts_expr}) DESC
+            LIMIT 500
+            """,
+            params=params,
+            fetch="all",
+        ) or []
 
     items = list(manual)
     items.extend(online)
@@ -146,32 +149,75 @@ def _parse_report_dates():
 
 def _revenue_cc_aggregate(date_filter_sql, params=()):
     _ensure_revenue_transactions_table()
-    return SQL_request(
-        f"""
-        SELECT
-            COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END), 0) AS cash,
-            COALESCE(SUM(CASE WHEN payment_method = 'card' THEN amount ELSE 0 END), 0) AS card
-        FROM revenue_transactions
-        WHERE kind = 'topup' AND {date_filter_sql}
-        """,
-        params=params,
-        fetch="one",
-    )
+    try:
+        result = SQL_request(
+            f"""
+            SELECT
+                COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END), 0) AS cash,
+                COALESCE(SUM(CASE WHEN payment_method = 'card' THEN amount ELSE 0 END), 0) AS card
+            FROM revenue_transactions
+            WHERE kind = 'topup' AND {date_filter_sql}
+            """,
+            params=params,
+            fetch="one",
+        )
+        return result or {"cash": 0, "card": 0}
+    except Exception as e:
+        logging.warning("revenue_cc_aggregate: %s", e)
+        return {"cash": 0, "card": 0}
 
 
 def _revenue_online_aggregate(date_filter_sql, params=()):
-    return SQL_request(
+    if not _payments_table_exists():
+        return {"online": 0}
+    expr = _payments_timestamp_expr()
+    if not expr:
+        return {"online": 0}
+    pay_filter = date_filter_sql.replace("created_at", expr)
+    result = SQL_request(
         f"""
         SELECT COALESCE(SUM(value), 0) AS online
         FROM payments
-        WHERE status = 'succeeded' AND {date_filter_sql}
+        WHERE status = 'succeeded' AND {pay_filter}
         """,
         params=params,
         fetch="one",
     )
+    return result or {"online": 0}
+
+
+def _payments_table_exists():
+    row = SQL_request(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='payments'",
+        fetch="one",
+    )
+    return bool(row)
+
+
+def _payments_timestamp_expr():
+    if not _payments_table_exists():
+        return None
+    columns = {
+        row["name"]
+        for row in (SQL_request("PRAGMA table_info(payments)", fetch="all") or [])
+    }
+    if "captured_at" in columns and "created_at" in columns:
+        return "COALESCE(captured_at, created_at)"
+    if "created_at" in columns:
+        return "created_at"
+    return None
+
+
+def _payments_date_filter(date_filter_sql):
+    expr = _payments_timestamp_expr()
+    if not expr:
+        return "1 = 0"
+    return date_filter_sql.replace("created_at", expr)
 
 
 def _merge_topup(cc_row, online_row):
+    cc_row = cc_row or {}
+    online_row = online_row or {}
     cash = int(cc_row.get("cash") or 0)
     card = int(cc_row.get("card") or 0)
     online = int(online_row.get("online") or 0)
@@ -198,10 +244,6 @@ def _range_bounds(date_from, date_to):
         "date(created_at) >= date(?) AND date(created_at) <= date(?)",
         (date_from, date_to),
     )
-
-
-def _payments_date_filter(date_filter_sql):
-    return date_filter_sql.replace("created_at", "COALESCE(captured_at, created_at)")
 
 
 @api.route("/admin/balance", methods=["POST"])
