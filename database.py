@@ -277,6 +277,18 @@ def ensure_roulette_column():
         )
 
 
+def ensure_roulette_pending_column():
+    columns = {
+        row["name"]
+        for row in (SQL_request("PRAGMA table_info(users)", fetch="all") or [])
+    }
+    if "roulette_pending" not in columns:
+        SQL_request(
+            "ALTER TABLE users ADD COLUMN roulette_pending TEXT",
+            fetch="none",
+        )
+
+
 create_users()
 create_verification_codes()
 create_time_packages()
@@ -288,3 +300,4 @@ create_pc_coupons()
 create_friendships()
 ensure_topup_bonus_column()
 ensure_roulette_column()
+ensure_roulette_pending_column()
