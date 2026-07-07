@@ -18,9 +18,9 @@ def is_package_active(package):
 
         if period == "дневной":
             start_time = datetime.time(8, 0)
-            end_time = datetime.time(17, 0)
+            end_time = datetime.time(14, 0)
         elif period == "вечерний":
-            start_time = datetime.time(17, 0)
+            start_time = datetime.time(14, 0)
             end_time = datetime.time(22, 0)
         elif period == "ночной":
             # Ночной период: 22:00 - 08:00
