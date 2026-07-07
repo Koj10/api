@@ -5,3 +5,4 @@ from .admin import *
 from .computers import *
 from .payments import *
 from .coupons import *
+from .friends import *

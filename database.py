@@ -230,6 +230,29 @@ def create_pc_coupons():
     )
 
 
+def create_friendships():
+    SQL_request(
+        """CREATE TABLE IF NOT EXISTS friendships (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        requester_id INTEGER NOT NULL REFERENCES users(id),
+        addressee_id INTEGER NOT NULL REFERENCES users(id),
+        status TEXT NOT NULL DEFAULT 'pending'
+            CHECK(status IN ('pending', 'accepted')),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(requester_id, addressee_id)
+    )"""
+    )
+    SQL_request(
+        "CREATE INDEX IF NOT EXISTS idx_friendships_addressee ON friendships(addressee_id, status)",
+        fetch="none",
+    )
+    SQL_request(
+        "CREATE INDEX IF NOT EXISTS idx_friendships_requester ON friendships(requester_id, status)",
+        fetch="none",
+    )
+
+
 create_users()
 create_verification_codes()
 create_time_packages()
@@ -238,3 +261,4 @@ create_computers()
 create_payments()
 create_revenue_transactions()
 create_pc_coupons()
+create_friendships()
