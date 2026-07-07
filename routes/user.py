@@ -1,12 +1,5 @@
 from .main_routes import *
 from bonus import bonus_profile_fields, process_topup_bonus
-from roulette_rewards import (
-    claim_pending_prize,
-    commit_spin,
-    get_pending_prize,
-    load_prize_definitions,
-    pick_prize_index,
-)
 import datetime
 
 
@@ -223,7 +216,6 @@ def profile():
             "inventory": g.user["inventory"],
             "email_confirmed": g.user["email_confirmed"],
             "role": g.user["role"],
-            "roulette": int(g.user.get("roulette") or 0),
             **bonus_profile_fields(g.user),
         }
     ), 200
@@ -348,113 +340,45 @@ def new_password():
         return jsonify({"error": "Не удалось изменить пароль"}), 403
 
 
-@api.route("/roulette/spin", methods=["GET", "POST"])
+@api.route("/roulette/spin", methods=["GET"])
 @auth_decorator()
 def roulette_spin():
-    user = SQL_request("SELECT * FROM users WHERE id=?", (g.user["id"],), "one")
-    if not user:
-        return jsonify({"error": "Пользователь не найден"}), 404
-
-    perform = request.method == "POST" or request.args.get("perform") in ("1", "true", "yes")
-    if not perform:
-        spin = int(user.get("roulette") or 0)
-        pending = get_pending_prize(user)
+    user_data = g.user
+    user = SQL_request("SELECT * FROM users WHERE id=?", (user_data["id"],), "one")
+    if user:
+        spin = user.get("roulette") or 0
+        activate = False
+        if spin > 0:
+            activate = True
+            spin -= 1
+            SQL_request(
+                "UPDATE users SET roulette = ? WHERE id = ?",
+                params=(spin, user_data["id"]),
+                fetch="none",
+            )
         return jsonify(
             {
-                "spin": spin > 0 and pending is None,
-                "roulette": spin,
-                "pending": pending,
+                "spin": activate,
             }
         ), 200
-
-    pending = get_pending_prize(user)
-    if pending:
-        return jsonify(
-            {
-                "error": "Сначала получите предыдущий приз",
-                "pending": pending,
-            }
-        ), 409
-
-    spin = int(user.get("roulette") or 0)
-    if spin <= 0:
-        return jsonify({"error": "Недостаточно спинов", "spin": False}), 403
-
-    try:
-        prizes = load_prize_definitions()
-        prize_index = pick_prize_index(prizes)
-        prize_def = prizes[prize_index]
-        new_spin = spin - 1
-        pending_prize = commit_spin(user["id"], prize_index, prize_def, new_spin)
-    except FileNotFoundError:
-        return jsonify({"error": "Конфигурация призов не найдена на сервере"}), 500
-    except Exception as exc:
-        print(f"roulette spin error: {exc}")
-        return jsonify({"error": "Не удалось выполнить спин"}), 500
-
-    return jsonify(
-        {
-            "spin": True,
-            **pending_prize,
-            "roulette": new_spin,
-        }
-    ), 200
-
-
-@api.route("/roulette/claim", methods=["GET", "POST"])
-@auth_decorator()
-def roulette_claim():
-    user = SQL_request("SELECT * FROM users WHERE id=?", (g.user["id"],), "one")
-    if not user:
+    else:
         return jsonify({"error": "Пользователь не найден"}), 404
-
-    perform = request.method == "POST" or request.args.get("perform") in ("1", "true", "yes")
-    if not perform:
-        pending = get_pending_prize(user)
-        return jsonify({"pending": pending, "has_pending": pending is not None}), 200
-
-    try:
-        result, error = claim_pending_prize(user)
-    except Exception as exc:
-        print(f"roulette claim error: {exc}")
-        return jsonify({"error": "Не удалось получить приз"}), 500
-
-    if error:
-        return jsonify({"error": error}), 400
-
-    user = SQL_request("SELECT * FROM users WHERE id=?", (user["id"],), "one")
-
-    return jsonify(
-        {
-            "message": "Приз получен",
-            "prize_name": result["prize_name"],
-            "prize_icon": result.get("prize_icon", ""),
-            "prize_index": result["prize_index"],
-            "reward": result["reward"],
-            "balance": user["balance"],
-            "inventory": user["inventory"],
-            "roulette": int(user.get("roulette") or 0),
-        }
-    ), 200
 
 
 @api.route("/roulette", methods=["GET"])
 @auth_decorator()
 def get_roulette_spins():
-    user = SQL_request("SELECT * FROM users WHERE id=?", (g.user["id"],), "one")
-    if not user:
+    user_data = g.user
+    user = SQL_request("SELECT * FROM users WHERE id=?", (user_data["id"],), "one")
+    if user:
+        spin = user.get("roulette") or 0
+        return jsonify(
+            {
+                "spin": spin,
+            }
+        ), 200
+    else:
         return jsonify({"error": "Пользователь не найден"}), 404
-
-    spin = int(user.get("roulette") or 0)
-    pending = get_pending_prize(user)
-    return jsonify(
-        {
-            "spin": spin,
-            "roulette": spin,
-            "pending": pending,
-            "can_spin": spin > 0 and pending is None,
-        }
-    ), 200
 
 
 @api.route("/roulette/add", methods=["POST"])
@@ -480,8 +404,7 @@ def add_roulette_spins():
             fetch="none",
         )
         return jsonify(
-            {"message": f"Добавлено {spins_to_add} вращений. Всего: {new_spin_count}",
-             "roulette": new_spin_count}
+            {"message": f"Добавлено {spins_to_add} вращений. Всего: {new_spin_count}"}
         ), 200
     except Exception as e:
         print(e)
