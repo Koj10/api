@@ -28,6 +28,10 @@ def is_package_active(package):
                 return True
             else:
                 return False
+        elif period == "бесконечный":
+            # Доступен всегда, кроме 08:00–14:00
+            if datetime.time(8, 0) <= current_time < datetime.time(14, 0):
+                return False
 
         if start_time is not None and end_time is not None:
             if not (start_time <= current_time < end_time):
