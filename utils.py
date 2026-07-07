@@ -36,8 +36,7 @@ def register_send_code(email):
         VALUES (?, ?, 'register')
     """, params=(email, code), fetch='none')
 
-    # Отправляем письмо
-    send_email(
+    return send_email(
         to_email=email,
         subject="Код подтверждения",
         text_body=f"Ваш код: {code}",

@@ -117,9 +117,40 @@ def register():
 
 @api.route("/verify-code/send", methods=["POST"])
 def send_verify_code():
-    data = request.get_json()
-    email = data.get("email")
-    register_send_code(email)
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        try:
+            token = auth_header.split(" ", 1)[1]
+            payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+            user_id = payload.get("user_id")
+            if user_id not in (None, "computer", "password"):
+                user = SQL_request(
+                    "SELECT email FROM users WHERE id = ?",
+                    params=(user_id,),
+                    fetch="one",
+                )
+                if user:
+                    email = user["email"]
+        except Exception:
+            pass
+
+    if not email or "@" not in email:
+        return jsonify({"error": "Некорректный email"}), 400
+
+    user = SQL_request(
+        "SELECT id FROM users WHERE email = ?",
+        params=(email,),
+        fetch="one",
+    )
+    if not user:
+        return jsonify({"error": "Пользователь не найден"}), 404
+
+    if not register_send_code(email):
+        return jsonify({"error": "Не удалось отправить письмо. Проверьте настройки почты на сервере"}), 503
+
     return jsonify({"message": "Код отправлен"}), 200
 
 
@@ -247,8 +278,18 @@ def activate_product():
 
 @api.route("/reset-password", methods=["POST"])
 def reset_password():
-    data = request.get_json()
-    email = str(data.get("email"))
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    if not email:
+        return jsonify({"error": "Email обязателен"}), 400
+
+    user = SQL_request(
+        "SELECT email FROM users WHERE email = ?", params=(email,), fetch="one"
+    )
+    if not user:
+        return jsonify({"error": "Email не найден"}), 404
+
+    email = user["email"]
     token = jwt.encode(
         {
             "user_id": "password",
@@ -260,20 +301,21 @@ def reset_password():
         algorithm="HS256",
     )
 
-    email = SQL_request(
-        "SELECT email FROM users WHERE email = ?", params=(email,), fetch="one"
-    )["email"]
-    if not email:
-        abort(404, description="Email не найден")
-
-    send_email(
+    sent = send_email(
         to_email=email,
         subject="Восстановление пароля",
-        text_body="",
-        html_body=f'<p>Перейдите по <a href="https://pc.game-sense.ru/reset-password/{token}">ссылке</a> для восстановления пароля</p>\n\nhttps://pc.game-sense.ru/reset-password/{token}',
+        text_body=f"Перейдите по ссылке для восстановления пароля:\nhttps://pc.game-sense.ru/reset-password/{token}",
+        html_body=(
+            f'<p>Перейдите по <a href="https://pc.game-sense.ru/reset-password/{token}">ссылке</a> '
+            f"для восстановления пароля</p>"
+            f"<p>https://pc.game-sense.ru/reset-password/{token}</p>"
+        ),
     )
+    if not sent:
+        return jsonify({"error": "Не удалось отправить письмо. Попробуйте позже"}), 503
+
     return jsonify(
-        {"message": "Ссылка для восстановления пароля, отправлена на почту"}
+        {"message": "Ссылка для восстановления пароля отправлена на почту"}
     ), 200
 
 
