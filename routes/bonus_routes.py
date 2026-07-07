@@ -47,7 +47,7 @@ def bonus_open():
 
     prize = roll_bonus_prize()
     claim_id = secrets.token_hex(16)
-    win_index = random.randint(36, 44)
+    win_index = random.randint(48, 58)
 
     set_pending_bonus_claim(user["id"], claim_id, prize)
 
