@@ -223,3 +223,45 @@ def create_coupon():
             "time_active": session["time_active"],
         }
     ), 201
+
+
+@api.route("/admin/sessions/end", methods=["POST"])
+@auth_decorator("admin")
+def end_session_early():
+    data = request.get_json(silent=True) or {}
+    try:
+        computer_id = int(data.get("computer_id"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Укажите компьютер"}), 400
+
+    computer = SQL_request(
+        "SELECT * FROM computers WHERE id = ? AND number_pc IS NOT NULL",
+        (computer_id,),
+        fetch="one",
+    )
+    if not computer:
+        return jsonify({"error": "Компьютер не найден"}), 404
+    if computer.get("status") != "занят":
+        return jsonify({"error": "На этом ПК нет активной сессии"}), 400
+
+    SQL_request(
+        """
+        UPDATE computers
+        SET status = 'активен',
+            time_active = NULL,
+            user_active = NULL,
+            session_started_at = NULL,
+            session_duration_minutes = NULL
+        WHERE id = ?
+        """,
+        (computer_id,),
+        fetch="none",
+    )
+
+    return jsonify(
+        {
+            "message": "Сессия завершена досрочно",
+            "computer_id": computer_id,
+            "number_pc": computer.get("number_pc"),
+        }
+    ), 200
