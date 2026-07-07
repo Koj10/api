@@ -181,7 +181,9 @@ def create_coupon():
 
     admin_id = getattr(g, "user", {}).get("id")
     code = _generate_coupon_code()
-    amount = int(round(float(package.get("price") or 0)))
+    is_vip_pc = (computer.get("zone") or "regular").lower() == "vip"
+    package_price = package.get("price_vip") if is_vip_pc else package.get("price")
+    amount = int(round(float(package_price or 0)))
 
     conn = sqlite3.connect(DB_PATH)
     try:
@@ -215,6 +217,7 @@ def create_coupon():
             "number_pc": computer.get("number_pc"),
             "package_name": package.get("name"),
             "amount": amount,
+            "zone": computer.get("zone") or "regular",
             "session_started_at": session["session_started_at"],
             "session_duration_minutes": session["session_duration_minutes"],
             "time_active": session["time_active"],

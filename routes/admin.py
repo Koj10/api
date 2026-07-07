@@ -572,6 +572,7 @@ def add_time_package():
     description = data.get('description', '')
     duration_minutes = data['duration_minutes']
     price = data['price']
+    price_vip = data.get('price_vip', price)
     time_period = data['time_period'].lower()
     is_weekday = data.get('is_weekday', False)
     is_weekend = data.get('is_weekend', False)
@@ -583,6 +584,8 @@ def add_time_package():
 
     try: price = float(price)
     except: jsonify({"error": "price должен быть неотрицательным числом"}), 400
+    try: price_vip = float(price_vip)
+    except: jsonify({"error": "price_vip должен быть неотрицательным числом"}), 400
 
     # Проверки значений
     if not isinstance(duration_minutes, int) or duration_minutes <= 0:
@@ -590,6 +593,8 @@ def add_time_package():
 
     if not isinstance(price, (int, float)) or price < 0:
         return jsonify({"error": "price должен быть неотрицательным числом"}), 400
+    if not isinstance(price_vip, (int, float)) or price_vip < 0:
+        return jsonify({"error": "price_vip должен быть неотрицательным числом"}), 400
 
     if time_period not in ['дневной', 'ночной', 'вечерний', 'бесконечный']:
         return jsonify({"error": "time_period должен быть одним из: 'дневной', 'вечерний', 'ночной', 'бесконечный'"}), 400
@@ -601,11 +606,12 @@ def add_time_package():
         description, 
         duration_minutes, 
         price, 
+        price_vip,
         time_period,  
         is_weekend, 
         is_active,
         image
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 
     values = (
@@ -613,6 +619,7 @@ def add_time_package():
         description,
         duration_minutes,
         price,
+        price_vip,
         time_period,
         is_weekend,
         is_active,

@@ -101,11 +101,28 @@ def create_time_packages():
     description TEXT,
     duration_minutes INTEGER NOT NULL CHECK(duration_minutes > 0),
     price DECIMAL(10,2) NOT NULL CHECK(price >= 0),
+    price_vip DECIMAL(10,2) NOT NULL DEFAULT 0 CHECK(price_vip >= 0),
     time_period VARCHAR(10) CHECK(time_period IN ('дневной', 'вечерний', 'ночной', "бесконечный")),
     is_weekend BOOLEAN DEFAULT FALSE,
     is_active BOOLEAN DEFAULT TRUE,
     image BLOB
 );""")
+    columns = {
+        row["name"]
+        for row in (SQL_request("PRAGMA table_info(time_packages)", fetch="all") or [])
+    }
+    if "price_vip" not in columns:
+        try:
+            SQL_request(
+                "ALTER TABLE time_packages ADD COLUMN price_vip DECIMAL(10,2) NOT NULL DEFAULT 0",
+                fetch="none",
+            )
+            SQL_request(
+                "UPDATE time_packages SET price_vip = price WHERE price_vip = 0",
+                fetch="none",
+            )
+        except Exception:
+            pass
 
 
 def create_purchases():
@@ -130,6 +147,7 @@ def create_computers():
     session_started_at TEXT,
     session_duration_minutes INTEGER,
     user_active INTEGER REFERENCES users(id),
+    zone TEXT NOT NULL DEFAULT 'regular',
     time_zone INTEGER DEFAULT 0,
     status VARCHAR(20) CHECK(status IN ('активен', 'занят', 'заблокирован', "ремонт", "админ", "выключен"))
 );""")
@@ -146,6 +164,14 @@ def create_computers():
         try:
             SQL_request(
                 "ALTER TABLE computers ADD COLUMN session_duration_minutes INTEGER",
+                fetch="none",
+            )
+        except Exception:
+            pass
+    if "zone" not in columns:
+        try:
+            SQL_request(
+                "ALTER TABLE computers ADD COLUMN zone TEXT NOT NULL DEFAULT 'regular'",
                 fetch="none",
             )
         except Exception:

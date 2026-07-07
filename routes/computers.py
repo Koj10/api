@@ -3,16 +3,24 @@ from .main_routes import *
 @api.route('/pc/register', methods=['GET'])
 def pc_register():
     token = generate_pc_token()
-    SQL_request("INSERT INTO computers (token, status) VALUES (?, 'ремонт')", (token,), fetch=None)
+    SQL_request(
+        "INSERT INTO computers (token, status, zone) VALUES (?, 'ремонт', 'regular')",
+        (token,),
+        fetch=None,
+    )
     return jsonify({"token":token}), 200
 
 @api.route('/pc/status', methods=['POST'])
 @auth_decorator()
 def edit_status():
     unlock_status = ["занят", 'активен']
+    allowed_zones = {"regular", "vip"}
     data = request.get_json()
     req_token = data.get('token')
     status = data.get('status')
+    zone = (data.get('zone') or '').strip().lower()
+    if zone and zone not in allowed_zones:
+        return jsonify({"error": "Некорректная зона"}), 400
     time_str = data.get('time')
     time = None
     if time_str:
@@ -35,10 +43,11 @@ def edit_status():
     if status == "активен":
         time = None
         user_id = None
+        new_zone = zone or (computer.get("zone") or "regular")
         SQL_request(
             "UPDATE computers SET status = ?, time_active = ?, user_active = ?, "
-            "session_started_at = NULL, session_duration_minutes = NULL WHERE token = ?",
-            params=(status, time, user_id, token),
+            "session_started_at = NULL, session_duration_minutes = NULL, zone = ? WHERE token = ?",
+            params=(status, time, user_id, new_zone, token),
             fetch="none",
         )
         return jsonify({"message": "Статус изменён"}), 200
@@ -50,9 +59,10 @@ def edit_status():
         user_id = computer.get('user_active')
 
     try:
+        new_zone = zone or (computer.get("zone") or "regular")
         SQL_request(
-            "UPDATE computers SET status = ?, time_active = ?, user_active = ? WHERE token = ?",
-            params=(status, time, user_id, token),
+            "UPDATE computers SET status = ?, time_active = ?, user_active = ?, zone = ? WHERE token = ?",
+            params=(status, time, user_id, new_zone, token),
             fetch="none",
         )
         return jsonify({"message":"Статус изменён"}), 200
