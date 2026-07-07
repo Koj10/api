@@ -30,7 +30,7 @@ def is_package_active(package):
                 return False
 
         if start_time is not None and end_time is not None:
-            if not (start_time <= current_time <= end_time):
+            if not (start_time <= current_time < end_time):
                 return False
 
         return True  # Все условия выполнены
