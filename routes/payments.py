@@ -1,4 +1,5 @@
 from .main_routes import *
+from bonus import process_topup_bonus
 
 import requests
 import uuid
@@ -139,6 +140,8 @@ def payments_status():
                         params=(payment_data["user_id"], int(round(payment_value))),
                         fetch="none",
                     )
+
+                    process_topup_bonus(payment_data["user_id"], payment_value)
                     
                     logging.info(f"Баланс пользователя {payment_data['user_id']} пополнен на {payment_value}")
         

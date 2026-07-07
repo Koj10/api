@@ -1,4 +1,5 @@
 from .main_routes import *
+from bonus import bonus_profile_fields, process_topup_bonus
 import datetime
 
 
@@ -215,6 +216,7 @@ def profile():
             "inventory": g.user["inventory"],
             "email_confirmed": g.user["email_confirmed"],
             "role": g.user["role"],
+            **bonus_profile_fields(g.user),
         }
     ), 200
 

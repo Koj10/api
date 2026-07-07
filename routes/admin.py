@@ -2,6 +2,7 @@ import sqlite3
 import logging
 
 from database import DB_PATH
+from bonus import process_topup_bonus
 from .main_routes import *
 
 
@@ -366,6 +367,7 @@ def admin_balance_adjust():
 
     new_balance = None
     admin_id = getattr(g, "user", {}).get("id")
+    topup_for_bonus = 0
     conn = sqlite3.connect(DB_PATH)
     try:
         cur = conn.cursor()
@@ -395,6 +397,7 @@ def admin_balance_adjust():
                        VALUES (?, ?, ?, ?, 'topup')""",
                     (user_id, admin_id, delta, payment_method),
                 )
+                topup_for_bonus = delta
             else:
                 if target_balance > current:
                     return jsonify(
@@ -426,6 +429,7 @@ def admin_balance_adjust():
                    VALUES (?, ?, ?, ?, 'topup')""",
                 (user_id, admin_id, amount_delta, payment_method),
             )
+            topup_for_bonus = amount_delta
         else:
             new_balance = max(0, current - amount_delta)
             withdrawn = current - new_balance
@@ -445,6 +449,9 @@ def admin_balance_adjust():
         return jsonify({"error": "Ошибка базы данных"}), 500
     finally:
         conn.close()
+
+    if topup_for_bonus > 0:
+        process_topup_bonus(user_id, topup_for_bonus)
 
     return jsonify({"message": "Баланс обновлён", "balance": new_balance}), 200
 
