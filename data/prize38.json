@@ -1,0 +1,268 @@
+[
+  {
+    "name": "450 РУБЛЕЙ",
+    "icon": "account_balance",
+    "count": 1,
+    "reward_type": "balance",
+    "reward_value": 450
+  },
+  {
+    "name": "1 ЧАС",
+    "icon": "access_time",
+    "count": 1,
+    "reward_type": "time_package",
+    "reward_minutes": 60
+  },
+  {
+    "name": "1 ЧАС",
+    "icon": "access_time",
+    "count": 1,
+    "reward_type": "time_package",
+    "reward_minutes": 60
+  },
+  {
+    "name": "1 ЧАС",
+    "icon": "access_time",
+    "count": 1,
+    "reward_type": "time_package",
+    "reward_minutes": 60
+  },
+  {
+    "name": "1 ЧАС",
+    "icon": "access_time",
+    "count": 1,
+    "reward_type": "time_package",
+    "reward_minutes": 60
+  },
+  {
+    "name": "1 ЧАС",
+    "icon": "access_time",
+    "count": 1,
+    "reward_type": "time_package",
+    "reward_minutes": 60
+  },
+  {
+    "name": "1 ЧАС",
+    "icon": "access_time",
+    "count": 1,
+    "reward_type": "time_package",
+    "reward_minutes": 60
+  },
+  {
+    "name": "1 ЧАС",
+    "icon": "access_time",
+    "count": 1,
+    "reward_type": "time_package",
+    "reward_minutes": 60
+  },
+  {
+    "name": "1 ЧАС",
+    "icon": "access_time",
+    "count": 1,
+    "reward_type": "time_package",
+    "reward_minutes": 60
+  },
+  {
+    "name": "1 ЧАС",
+    "icon": "access_time",
+    "count": 1,
+    "reward_type": "time_package",
+    "reward_minutes": 60
+  },
+  {
+    "name": "1 ЧАС",
+    "icon": "access_time",
+    "count": 1,
+    "reward_type": "time_package",
+    "reward_minutes": 60
+  },
+  {
+    "name": "1 ЧАС",
+    "icon": "access_time",
+    "count": 1,
+    "reward_type": "time_package",
+    "reward_minutes": 60
+  },
+  {
+    "name": "1 ЧАС",
+    "icon": "access_time",
+    "count": 1,
+    "reward_type": "time_package",
+    "reward_minutes": 60
+  },
+  {
+    "name": "3 ЧАСА",
+    "icon": "schedule",
+    "count": 1,
+    "reward_type": "time_package",
+    "reward_minutes": 180
+  },
+  {
+    "name": "3 ЧАСА",
+    "icon": "schedule",
+    "count": 1,
+    "reward_type": "time_package",
+    "reward_minutes": 180
+  },
+  {
+    "name": "3 ЧАСА",
+    "icon": "schedule",
+    "count": 1,
+    "reward_type": "time_package",
+    "reward_minutes": 180
+  },
+  {
+    "name": "3 ЧАСА",
+    "icon": "schedule",
+    "count": 1,
+    "reward_type": "time_package",
+    "reward_minutes": 180
+  },
+  {
+    "name": "5 ЧАСОВ",
+    "icon": "timer",
+    "count": 1,
+    "reward_type": "time_package",
+    "reward_minutes": 300
+  },
+  {
+    "name": "5 ЧАСОВ",
+    "icon": "timer",
+    "count": 1,
+    "reward_type": "time_package",
+    "reward_minutes": 300
+  },
+  {
+    "name": "450 РУБЛЕЙ",
+    "icon": "account_balance",
+    "count": 1,
+    "reward_type": "balance",
+    "reward_value": 450
+  },
+  {
+    "name": "200 РУБЛЕЙ",
+    "icon": "account_balance_wallet",
+    "count": 1,
+    "reward_type": "balance",
+    "reward_value": 200
+  },
+  {
+    "name": "200 РУБЛЕЙ",
+    "icon": "account_balance_wallet",
+    "count": 1,
+    "reward_type": "balance",
+    "reward_value": 200
+  },
+  {
+    "name": "200 РУБЛЕЙ",
+    "icon": "account_balance_wallet",
+    "count": 1,
+    "reward_type": "balance",
+    "reward_value": 200
+  },
+  {
+    "name": "200 РУБЛЕЙ",
+    "icon": "account_balance_wallet",
+    "count": 1,
+    "reward_type": "balance",
+    "reward_value": 200
+  },
+  {
+    "name": "200 РУБЛЕЙ",
+    "icon": "account_balance_wallet",
+    "count": 1,
+    "reward_type": "balance",
+    "reward_value": 200
+  },
+  {
+    "name": "200 РУБЛЕЙ",
+    "icon": "account_balance_wallet",
+    "count": 1,
+    "reward_type": "balance",
+    "reward_value": 200
+  },
+  {
+    "name": "200 РУБЛЕЙ",
+    "icon": "account_balance_wallet",
+    "count": 1,
+    "reward_type": "balance",
+    "reward_value": 200
+  },
+  {
+    "name": "200 РУБЛЕЙ",
+    "icon": "account_balance_wallet",
+    "count": 1,
+    "reward_type": "balance",
+    "reward_value": 200
+  },
+  {
+    "name": "200 РУБЛЕЙ",
+    "icon": "account_balance_wallet",
+    "count": 1,
+    "reward_type": "balance",
+    "reward_value": 200
+  },
+  {
+    "name": "200 РУБЛЕЙ",
+    "icon": "account_balance_wallet",
+    "count": 1,
+    "reward_type": "balance",
+    "reward_value": 200
+  },
+  {
+    "name": "200 РУБЛЕЙ",
+    "icon": "account_balance_wallet",
+    "count": 1,
+    "reward_type": "balance",
+    "reward_value": 200
+  },
+  {
+    "name": "200 РУБЛЕЙ",
+    "icon": "account_balance_wallet",
+    "count": 1,
+    "reward_type": "balance",
+    "reward_value": 200
+  },
+  {
+    "name": "400 РУБЛЕЙ",
+    "icon": "account_balance",
+    "count": 1,
+    "reward_type": "balance",
+    "reward_value": 400
+  },
+  {
+    "name": "400 РУБЛЕЙ",
+    "icon": "account_balance",
+    "count": 1,
+    "reward_type": "balance",
+    "reward_value": 400
+  },
+  {
+    "name": "300 РУБЛЕЙ",
+    "icon": "monetization_on",
+    "count": 1,
+    "reward_type": "balance",
+    "reward_value": 300
+  },
+  {
+    "name": "300 РУБЛЕЙ",
+    "icon": "monetization_on",
+    "count": 1,
+    "reward_type": "balance",
+    "reward_value": 300
+  },
+  {
+    "name": "300 РУБЛЕЙ",
+    "icon": "monetization_on",
+    "count": 1,
+    "reward_type": "balance",
+    "reward_value": 300
+  },
+  {
+    "name": "300 РУБЛЕЙ",
+    "icon": "monetization_on",
+    "count": 1,
+    "reward_type": "balance",
+    "reward_value": 300
+  }
+]

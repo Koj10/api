@@ -265,6 +265,18 @@ def ensure_topup_bonus_column():
         )
 
 
+def ensure_roulette_column():
+    columns = {
+        row["name"]
+        for row in (SQL_request("PRAGMA table_info(users)", fetch="all") or [])
+    }
+    if "roulette" not in columns:
+        SQL_request(
+            "ALTER TABLE users ADD COLUMN roulette INTEGER NOT NULL DEFAULT 0",
+            fetch="none",
+        )
+
+
 create_users()
 create_verification_codes()
 create_time_packages()
@@ -275,3 +287,4 @@ create_revenue_transactions()
 create_pc_coupons()
 create_friendships()
 ensure_topup_bonus_column()
+ensure_roulette_column()
