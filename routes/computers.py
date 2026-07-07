@@ -40,6 +40,16 @@ def edit_status():
     if computer is None:
         return jsonify({"error":"Компьютер не найден"}), 404
 
+    if getattr(g, 'user', None) and g.user.get('role') == 'admin':
+        if not zone:
+            return jsonify({"error": "Укажите зону"}), 400
+        SQL_request(
+            "UPDATE computers SET zone = ? WHERE token = ?",
+            params=(zone, token),
+            fetch="none",
+        )
+        return jsonify({"message": "Зона изменена"}), 200
+
     if status == "активен":
         time = None
         user_id = None
