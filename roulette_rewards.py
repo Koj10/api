@@ -47,6 +47,17 @@ def save_pending_prize(user_id, prize_index, prize_def):
     return pending
 
 
+def commit_spin(user_id, prize_index, prize_def, new_spin):
+    ensure_roulette_pending_column()
+    pending = prize_response(prize_def, prize_index)
+    SQL_request(
+        "UPDATE users SET roulette = ?, roulette_pending = ? WHERE id = ?",
+        params=(new_spin, json.dumps(pending, ensure_ascii=False), user_id),
+        fetch="none",
+    )
+    return pending
+
+
 def clear_pending_prize(user_id):
     ensure_roulette_pending_column()
     SQL_request(
