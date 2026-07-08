@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from user_tags import get_user_by_tag, normalize_tag
+
 from .main_routes import *
 
 
@@ -31,13 +33,14 @@ def _public_user_row(user):
         "id": user["id"],
         "first_name": user["first_name"],
         "last_name": user["last_name"],
+        "tag": user.get("tag"),
     }
 
 
 def _get_active_user(user_id):
     return SQL_request(
         """
-        SELECT id, first_name, last_name
+        SELECT id, first_name, last_name, tag
         FROM users
         WHERE id = ? AND email_confirmed = 1 AND is_active = 1
         """,
@@ -85,7 +88,7 @@ def list_friend_requests():
 
     incoming_rows = SQL_request(
         """
-        SELECT f.id, f.created_at, u.id AS user_id, u.first_name, u.last_name
+        SELECT f.id, f.created_at, u.id AS user_id, u.first_name, u.last_name, u.tag
         FROM friendships f
         JOIN users u ON u.id = f.requester_id
         WHERE f.addressee_id = ? AND f.status = 'pending'
@@ -98,7 +101,7 @@ def list_friend_requests():
 
     outgoing_rows = SQL_request(
         """
-        SELECT f.id, f.created_at, u.id AS user_id, u.first_name, u.last_name
+        SELECT f.id, f.created_at, u.id AS user_id, u.first_name, u.last_name, u.tag
         FROM friendships f
         JOIN users u ON u.id = f.addressee_id
         WHERE f.requester_id = ? AND f.status = 'pending'
@@ -116,6 +119,7 @@ def list_friend_requests():
                     "id": row["user_id"],
                     "first_name": row["first_name"],
                     "last_name": row["last_name"],
+                    "tag": row["tag"] if "tag" in row.keys() else None,
                     "requested_at": row["created_at"],
                 }
                 for row in incoming_rows
@@ -125,6 +129,7 @@ def list_friend_requests():
                     "id": row["user_id"],
                     "first_name": row["first_name"],
                     "last_name": row["last_name"],
+                    "tag": row["tag"] if "tag" in row.keys() else None,
                     "requested_at": row["created_at"],
                 }
                 for row in outgoing_rows
@@ -141,10 +146,14 @@ def search_users():
     if len(query) < 2:
         return jsonify([]), 200
 
+    if query.startswith("@"):
+        query = query[1:]
+
     like = f"%{query}%"
+    tag_query = normalize_tag(query)
     users = SQL_request(
         """
-        SELECT id, first_name, last_name
+        SELECT id, first_name, last_name, tag
         FROM users
         WHERE id != ?
           AND email_confirmed = 1
@@ -153,11 +162,14 @@ def search_users():
               first_name LIKE ? COLLATE NOCASE
               OR last_name LIKE ? COLLATE NOCASE
               OR (first_name || ' ' || last_name) LIKE ? COLLATE NOCASE
+              OR tag LIKE ? COLLATE NOCASE
           )
-        ORDER BY last_name, first_name
+        ORDER BY
+            CASE WHEN tag = ? THEN 0 ELSE 1 END,
+            last_name, first_name
         LIMIT 20
         """,
-        (me_id, like, like, like),
+        (me_id, like, like, like, like, tag_query),
         fetch="all",
     ) or []
 
@@ -176,10 +188,19 @@ def search_users():
 @auth_decorator()
 def send_friend_request():
     data = request.get_json(silent=True) or {}
+    target_id = data.get("user_id")
+    tag = normalize_tag(data.get("tag"))
+
+    if tag and not target_id:
+        target = get_user_by_tag(tag)
+        if not target:
+            return jsonify({"error": "Пользователь с таким тегом не найден"}), 404
+        target_id = target["id"]
+
     try:
-        target_id = int(data.get("user_id"))
+        target_id = int(target_id)
     except (TypeError, ValueError):
-        return jsonify({"error": "Укажите пользователя"}), 400
+        return jsonify({"error": "Укажите пользователя или тег"}), 400
 
     me_id = g.user["id"]
     if target_id == me_id:

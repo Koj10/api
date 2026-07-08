@@ -1,5 +1,12 @@
 from .main_routes import *
 from bonus import bonus_profile_fields, process_topup_bonus
+from user_tags import (
+    assign_tag_if_missing,
+    normalize_tag,
+    profile_tag_fields,
+    tag_exists,
+    validate_tag,
+)
 import datetime
 
 
@@ -98,6 +105,7 @@ def register():
         user_id = SQL_request(
             "SELECT id FROM users ORDER BY id DESC LIMIT 1;", fetch="one"
         )["id"]
+        assign_tag_if_missing(user_id, data.get("first_name"))
 
         token = jwt.encode(
             {
@@ -205,18 +213,97 @@ def verify_code():
 @api.route("/profile", methods=["GET"])
 @auth_decorator()
 def profile():
+    assign_tag_if_missing(g.user["id"], g.user.get("first_name"))
+    fresh_user = SQL_request(
+        "SELECT * FROM users WHERE id = ?",
+        params=(g.user["id"],),
+        fetch="one",
+    )
     return jsonify(
         {
-            "id": g.user["id"],
-            "email": g.user["email"],
-            "created_at": g.user["created_at"],
-            "first_name": g.user["first_name"],
-            "last_name": g.user["last_name"],
-            "balance": g.user["balance"],
-            "inventory": g.user["inventory"],
-            "email_confirmed": g.user["email_confirmed"],
-            "role": g.user["role"],
-            **bonus_profile_fields(g.user),
+            "id": fresh_user["id"],
+            "email": fresh_user["email"],
+            "created_at": fresh_user["created_at"],
+            "first_name": fresh_user["first_name"],
+            "last_name": fresh_user["last_name"],
+            "balance": fresh_user["balance"],
+            "inventory": fresh_user["inventory"],
+            "email_confirmed": fresh_user["email_confirmed"],
+            "role": fresh_user["role"],
+            **bonus_profile_fields(fresh_user),
+            **profile_tag_fields(fresh_user),
+        }
+    ), 200
+
+
+@api.route("/profile/settings", methods=["PATCH"])
+@auth_decorator()
+def update_profile_settings():
+    data = request.get_json(silent=True) or {}
+    user = SQL_request(
+        "SELECT * FROM users WHERE id = ?",
+        params=(g.user["id"],),
+        fetch="one",
+    )
+    if not user:
+        return jsonify({"error": "Пользователь не найден"}), 404
+
+    updates = []
+    params = []
+
+    first_name = (data.get("first_name") or "").strip()
+    last_name = (data.get("last_name") or "").strip()
+    if first_name:
+        updates.append("first_name = ?")
+        params.append(first_name)
+    if last_name:
+        updates.append("last_name = ?")
+        params.append(last_name)
+
+    if "tag" in data:
+        tag = normalize_tag(data.get("tag"))
+        ok, error = validate_tag(tag)
+        if not ok:
+            return jsonify({"error": error}), 400
+        if tag_exists(tag, exclude_user_id=user["id"]):
+            return jsonify({"error": "Этот тег уже занят"}), 400
+        updates.append("tag = ?")
+        params.append(tag)
+
+    if "date_of_birth" in data:
+        if user.get("date_of_birth"):
+            return jsonify({"error": "День рождения можно указать только один раз"}), 400
+        birthday = (data.get("date_of_birth") or "").strip()
+        if not birthday:
+            return jsonify({"error": "Укажите дату рождения"}), 400
+        try:
+            datetime.datetime.strptime(birthday, "%Y-%m-%d")
+        except ValueError:
+            return jsonify({"error": "Некорректная дата рождения"}), 400
+        updates.append("date_of_birth = ?")
+        params.append(birthday)
+
+    if not updates:
+        return jsonify({"error": "Нет данных для обновления"}), 400
+
+    params.append(user["id"])
+    SQL_request(
+        f"UPDATE users SET {', '.join(updates)} WHERE id = ?",
+        params=tuple(params),
+        fetch="none",
+    )
+
+    fresh_user = SQL_request(
+        "SELECT * FROM users WHERE id = ?",
+        params=(user["id"],),
+        fetch="one",
+    )
+    return jsonify(
+        {
+            "message": "Профиль обновлён",
+            "first_name": fresh_user["first_name"],
+            "last_name": fresh_user["last_name"],
+            **profile_tag_fields(fresh_user),
         }
     ), 200
 
