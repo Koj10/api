@@ -1,5 +1,6 @@
 from database import *
 import logging
+from cashback import credit_purchase_cashback
 from logging.handlers import RotatingFileHandler
 import random
 import string
@@ -79,7 +80,19 @@ def buy_products(user, product_id, type_product, quality):
             fetch='none'
         )
 
-    return {"message":"Оплата прошла успешно"}, 200
+    cashback_earned, cashback_percent = credit_purchase_cashback(user['id'], price)
+    fresh = SQL_request(
+        "SELECT cashback_balance FROM users WHERE id = ?",
+        params=(user['id'],),
+        fetch="one",
+    )
+
+    return {
+        "message": "Оплата прошла успешно",
+        "cashback_earned": cashback_earned,
+        "cashback_percent": cashback_percent,
+        "cashback_balance": int(fresh.get("cashback_balance") or 0) if fresh else 0,
+    }, 200
 
 
 def parse_db_datetime(value):

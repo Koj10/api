@@ -1,5 +1,6 @@
 from .main_routes import *
 from bonus import bonus_profile_fields, process_topup_bonus
+from cashback import cashback_profile_fields
 from loyalty_ranks import loyalty_profile_fields
 from play_time import ensure_play_time_columns
 from user_tags import (
@@ -246,6 +247,7 @@ def profile():
             **bonus_profile_fields(fresh_user),
             **profile_tag_fields(fresh_user),
             **loyalty_profile_fields(fresh_user),
+            **cashback_profile_fields(fresh_user),
         }
     ), 200
 

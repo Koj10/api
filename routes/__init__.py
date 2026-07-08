@@ -7,3 +7,4 @@ from .payments import *
 from .coupons import *
 from .friends import *
 from .bonus_routes import *
+from .loyalty_routes import *

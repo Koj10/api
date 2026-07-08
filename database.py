@@ -325,6 +325,18 @@ def ensure_play_sessions_table():
     )
 
 
+def ensure_cashback_column():
+    columns = {
+        row["name"]
+        for row in (SQL_request("PRAGMA table_info(users)", fetch="all") or [])
+    }
+    if "cashback_balance" not in columns:
+        SQL_request(
+            "ALTER TABLE users ADD COLUMN cashback_balance INTEGER NOT NULL DEFAULT 0",
+            fetch="none",
+        )
+
+
 create_users()
 create_verification_codes()
 create_time_packages()
@@ -339,3 +351,4 @@ ensure_pending_bonus_column()
 ensure_tag_column()
 ensure_play_time_columns()
 ensure_play_sessions_table()
+ensure_cashback_column()
