@@ -1,7 +1,9 @@
 import sqlite3
 import logging
+from urllib.parse import unquote
 
 from database import DB_PATH
+from date_format import format_date_dmy, parse_date_dmy
 from bonus import process_topup_bonus
 from .main_routes import *
 
@@ -179,9 +181,22 @@ def _get_transactions(rt_filter, pay_filter, params=()):
 
 
 def _parse_report_dates():
-    date_from = request.args.get("date_from") or request.args.get("from")
-    date_to = request.args.get("date_to") or request.args.get("to")
-    return date_from, date_to
+    raw_from = unquote((request.args.get("date_from") or request.args.get("from") or "").strip())
+    raw_to = unquote((request.args.get("date_to") or request.args.get("to") or "").strip())
+    if not raw_from and not raw_to:
+        return None, None
+    if not raw_from or not raw_to:
+        return None, None
+    try:
+        return parse_date_dmy(raw_from), parse_date_dmy(raw_to)
+    except ValueError:
+        return "invalid", "invalid"
+
+
+def _report_dates_error(date_from, date_to):
+    if date_from == "invalid" or date_to == "invalid":
+        return jsonify({"error": "Некорректная дата. Формат: ДД/ММ/ГГГГ"}), 400
+    return None
 
 
 def _revenue_cc_aggregate(date_filter_sql, params=()):
@@ -462,12 +477,19 @@ def admin_revenue():
     try:
         _ensure_revenue_transactions_table()
         date_from, date_to = _parse_report_dates()
+        dates_error = _report_dates_error(date_from, date_to)
+        if dates_error:
+            return dates_error
 
         if date_from and date_to:
             rt_filter, rt_params = _range_bounds(date_from, date_to)
             pay_filter = _payments_date_filter(rt_filter)
             custom = _build_period_summary(rt_filter, rt_params)
-            return jsonify({"custom": custom, "date_from": date_from, "date_to": date_to}), 200
+            return jsonify({
+                "custom": custom,
+                "date_from": format_date_dmy(date_from),
+                "date_to": format_date_dmy(date_to),
+            }), 200
 
         today = _build_period_summary(*_period_bounds("today"))
         week = _build_period_summary(*_period_bounds("week"))
@@ -485,6 +507,9 @@ def admin_revenue_report():
     try:
         _ensure_revenue_transactions_table()
         date_from, date_to = _parse_report_dates()
+        dates_error = _report_dates_error(date_from, date_to)
+        if dates_error:
+            return dates_error
         period = request.args.get("period", "today")
         bootstrap = request.args.get("bootstrap") in ("1", "true", "yes")
 
@@ -496,8 +521,8 @@ def admin_revenue_report():
             return jsonify(
                 {
                     "period": "custom",
-                    "date_from": date_from,
-                    "date_to": date_to,
+                    "date_from": format_date_dmy(date_from),
+                    "date_to": format_date_dmy(date_to),
                     "summary": summary,
                     "transactions": transactions,
                 }
@@ -544,6 +569,9 @@ def admin_revenue_transactions():
 
         period = request.args.get("period")
         date_from, date_to = _parse_report_dates()
+        dates_error = _report_dates_error(date_from, date_to)
+        if dates_error:
+            return dates_error
 
         if date_from and date_to:
             rt_filter, params = _range_bounds(date_from, date_to)

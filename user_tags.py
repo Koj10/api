@@ -1,6 +1,7 @@
 import re
 
 from database import SQL_request, ensure_tag_column
+from date_format import format_date_dmy
 
 TAG_PATTERN = re.compile(r"^[a-z0-9_]{3,20}$")
 
@@ -85,6 +86,6 @@ def profile_tag_fields(user):
     birthday = user.get("date_of_birth")
     return {
         "tag": tag,
-        "date_of_birth": birthday,
+        "date_of_birth": format_date_dmy(birthday) if birthday else None,
         "birthday_locked": bool(birthday),
     }

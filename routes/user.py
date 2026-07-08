@@ -7,6 +7,7 @@ from user_tags import (
     tag_exists,
     validate_tag,
 )
+from date_format import parse_date_dmy
 import datetime
 
 
@@ -82,6 +83,14 @@ def register():
     # Хэшируем пароль
     hashed_password = generate_password_hash(password)
 
+    birthday_raw = data.get("date_of_birth")
+    birthday_iso = None
+    if birthday_raw:
+        try:
+            birthday_iso = parse_date_dmy(birthday_raw)
+        except ValueError:
+            return jsonify({"error": "Некорректная дата рождения. Формат: ДД/ММ/ГГГГ"}), 400
+
     # Подготавливаем данные
     try:
         SQL_request(
@@ -96,7 +105,7 @@ def register():
                 email,
                 data.get("phone_number"),
                 hashed_password,
-                data.get("date_of_birth"),
+                birthday_iso,
                 data.get("gender", "male"),
             ),
             fetch="none",
@@ -277,9 +286,9 @@ def update_profile_settings():
         if not birthday:
             return jsonify({"error": "Укажите дату рождения"}), 400
         try:
-            datetime.datetime.strptime(birthday, "%Y-%m-%d")
+            birthday = parse_date_dmy(birthday)
         except ValueError:
-            return jsonify({"error": "Некорректная дата рождения"}), 400
+            return jsonify({"error": "Некорректная дата рождения. Формат: ДД/ММ/ГГГГ"}), 400
         updates.append("date_of_birth = ?")
         params.append(birthday)
 
