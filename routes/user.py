@@ -1,5 +1,7 @@
 from .main_routes import *
 from bonus import bonus_profile_fields, process_topup_bonus
+from loyalty_ranks import loyalty_profile_fields
+from play_time import ensure_play_time_columns
 from user_tags import (
     assign_tag_if_missing,
     normalize_tag,
@@ -223,6 +225,7 @@ def verify_code():
 @auth_decorator()
 def profile():
     assign_tag_if_missing(g.user["id"], g.user.get("first_name"))
+    ensure_play_time_columns()
     fresh_user = SQL_request(
         "SELECT * FROM users WHERE id = ?",
         params=(g.user["id"],),
@@ -239,8 +242,10 @@ def profile():
             "inventory": fresh_user["inventory"],
             "email_confirmed": fresh_user["email_confirmed"],
             "role": fresh_user["role"],
+            "profile_public": bool(fresh_user.get("profile_public")),
             **bonus_profile_fields(fresh_user),
             **profile_tag_fields(fresh_user),
+            **loyalty_profile_fields(fresh_user),
         }
     ), 200
 
@@ -292,6 +297,10 @@ def update_profile_settings():
         updates.append("date_of_birth = ?")
         params.append(birthday)
 
+    if "profile_public" in data:
+        updates.append("profile_public = ?")
+        params.append(1 if data.get("profile_public") else 0)
+
     if not updates:
         return jsonify({"error": "Нет данных для обновления"}), 400
 
@@ -312,7 +321,9 @@ def update_profile_settings():
             "message": "Профиль обновлён",
             "first_name": fresh_user["first_name"],
             "last_name": fresh_user["last_name"],
+            "profile_public": bool(fresh_user.get("profile_public")),
             **profile_tag_fields(fresh_user),
+            **loyalty_profile_fields(fresh_user),
         }
     ), 200
 
@@ -364,11 +375,29 @@ def activate_product():
     remaining_minutes = minutes % 60
     formatted_time = f"{hours}:{remaining_minutes:02d}"
 
-    time = add_time_to_datetime(session_time_base(computer), formatted_time)
+    now = datetime.datetime.now()
+    started_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    base = session_time_base(computer)
+    if base:
+        time = add_time_to_datetime(base, formatted_time)
+        started_at = computer.get("session_started_at") or started_str
+        total_duration = int(computer.get("session_duration_minutes") or 0) + minutes
+    else:
+        time = add_time_to_datetime(started_str, formatted_time)
+        started_at = started_str
+        total_duration = minutes
 
     SQL_request(
-        "UPDATE computers SET status = 'занят', time_active = ?, user_active = ? WHERE token = ? ",
-        params=(time, user_id, token),
+        """
+        UPDATE computers
+        SET status = 'занят',
+            time_active = ?,
+            user_active = ?,
+            session_started_at = ?,
+            session_duration_minutes = ?
+        WHERE token = ?
+        """,
+        params=(time, user_id, started_at, total_duration, token),
         fetch="none",
     )
     return jsonify({"message": "Успешная активация"}), 200

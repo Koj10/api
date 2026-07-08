@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timedelta
 
 from database import DB_PATH
+from play_time import finalize_computer_session
 from .main_routes import *
 
 
@@ -243,6 +244,8 @@ def end_session_early():
         return jsonify({"error": "Компьютер не найден"}), 404
     if computer.get("status") != "занят":
         return jsonify({"error": "На этом ПК нет активной сессии"}), 400
+
+    finalize_computer_session(computer, source="admin_end")
 
     SQL_request(
         """

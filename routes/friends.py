@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from loyalty_ranks import loyalty_profile_fields
+from play_time import ensure_play_time_columns
 from user_tags import get_user_by_tag, normalize_tag
 
 from .main_routes import *
@@ -49,6 +51,50 @@ def _get_active_user(user_id):
     )
 
 
+def _can_view_profile(viewer_id, target_user):
+    if viewer_id == target_user["id"]:
+        return True
+    if target_user.get("profile_public"):
+        return True
+    return _friendship_status_for(viewer_id, target_user["id"]) == "accepted"
+
+
+def _public_profile_payload(target_user, viewer_id):
+    return {
+        "id": target_user["id"],
+        "first_name": target_user["first_name"],
+        "last_name": target_user["last_name"],
+        "tag": target_user.get("tag"),
+        "is_self": viewer_id == target_user["id"],
+        "is_friend": _friendship_status_for(viewer_id, target_user["id"]) == "accepted",
+        "profile_public": bool(target_user.get("profile_public")),
+        **loyalty_profile_fields(target_user),
+    }
+
+
+@api.route("/users/<int:user_id>/profile", methods=["GET"])
+@auth_decorator()
+def view_user_profile(user_id):
+    ensure_play_time_columns()
+    me_id = g.user["id"]
+    target = SQL_request(
+        """
+        SELECT id, first_name, last_name, tag, profile_public, play_time_minutes
+        FROM users
+        WHERE id = ? AND email_confirmed = 1 AND is_active = 1
+        """,
+        (user_id,),
+        fetch="one",
+    )
+    if not target:
+        return jsonify({"error": "Пользователь не найден"}), 404
+
+    if not _can_view_profile(me_id, target):
+        return jsonify({"error": "Профиль недоступен"}), 403
+
+    return jsonify(_public_profile_payload(target, me_id)), 200
+
+
 @api.route("/friends", methods=["GET"])
 @auth_decorator()
 def list_friends():
@@ -73,10 +119,24 @@ def list_friends():
 
     friends = []
     for row in rows:
-        user = _get_active_user(row["user_id"])
+        user = SQL_request(
+            """
+            SELECT id, first_name, last_name, tag, play_time_minutes
+            FROM users
+            WHERE id = ? AND email_confirmed = 1 AND is_active = 1
+            """,
+            (row["user_id"],),
+            fetch="one",
+        )
         if not user:
             continue
-        friends.append({**_public_user_row(user), "friends_since": row["created_at"]})
+        loyalty = loyalty_profile_fields(user)
+        friends.append({
+            **_public_user_row(user),
+            "friends_since": row["created_at"],
+            "rank": loyalty["rank"],
+            "play_hours": loyalty["play_hours"],
+        })
 
     return jsonify(friends), 200
 
@@ -153,7 +213,7 @@ def search_users():
     tag_query = normalize_tag(query)
     users = SQL_request(
         """
-        SELECT id, first_name, last_name, tag
+        SELECT id, first_name, last_name, tag, profile_public
         FROM users
         WHERE id != ?
           AND email_confirmed = 1
@@ -178,6 +238,7 @@ def search_users():
         result.append(
             {
                 **_public_user_row(user),
+                "profile_public": bool(user.get("profile_public")),
                 "friendship_status": _friendship_status_for(me_id, user["id"]),
             }
         )

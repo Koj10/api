@@ -293,6 +293,38 @@ def ensure_tag_column():
     )
 
 
+def ensure_play_time_columns():
+    columns = {
+        row["name"]
+        for row in (SQL_request("PRAGMA table_info(users)", fetch="all") or [])
+    }
+    if "play_time_minutes" not in columns:
+        SQL_request(
+            "ALTER TABLE users ADD COLUMN play_time_minutes INTEGER NOT NULL DEFAULT 0",
+            fetch="none",
+        )
+    if "profile_public" not in columns:
+        SQL_request(
+            "ALTER TABLE users ADD COLUMN profile_public INTEGER NOT NULL DEFAULT 0",
+            fetch="none",
+        )
+
+
+def ensure_play_sessions_table():
+    SQL_request(
+        """CREATE TABLE IF NOT EXISTS play_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        computer_id INTEGER REFERENCES computers(id),
+        started_at TEXT,
+        ended_at TEXT NOT NULL,
+        duration_minutes INTEGER NOT NULL,
+        source TEXT
+    )""",
+        fetch="none",
+    )
+
+
 create_users()
 create_verification_codes()
 create_time_packages()
@@ -305,3 +337,5 @@ create_friendships()
 ensure_topup_bonus_column()
 ensure_pending_bonus_column()
 ensure_tag_column()
+ensure_play_time_columns()
+ensure_play_sessions_table()

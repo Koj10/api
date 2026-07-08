@@ -1,4 +1,5 @@
 from .main_routes import *
+from play_time import finalize_computer_session
 
 @api.route('/pc/register', methods=['GET'])
 def pc_register():
@@ -51,6 +52,7 @@ def edit_status():
         return jsonify({"message": "Зона изменена"}), 200
 
     if status == "активен":
+        finalize_computer_session(computer, source="status_active")
         time = None
         user_id = None
         new_zone = zone or (computer.get("zone") or "regular")
