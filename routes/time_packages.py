@@ -1,6 +1,7 @@
 from .main_routes import *
 import base64
 import datetime
+from utils import get_computer_zone_by_token, resolve_package_price
 
 def is_package_active(package):
     now = datetime.datetime.now()
@@ -41,9 +42,10 @@ def is_package_active(package):
 
 @api.route('/time_packages', methods=['GET'])
 def time_packages():
+    pc_token = request.args.get('pc_token')
+    zone = get_computer_zone_by_token(pc_token)
     packages = SQL_request("SELECT * FROM time_packages", fetch='all')  # Получаем все пакеты
 
-    now = datetime.datetime.now()
     filtered_packages = []
 
     for package in packages:
@@ -51,6 +53,8 @@ def time_packages():
             package['is_active'] = 2
         if 'image' in package:
             del package['image']
+        package['display_price'] = resolve_package_price(package, zone)
+        package['price_zone'] = zone
         filtered_packages.append(package)
 
     return jsonify(filtered_packages), 200
@@ -68,6 +72,8 @@ def time_package(package_id):
     if not is_package_active(package):
         package['is_active'] = 2
 
+    package['display_price'] = resolve_package_price(package, "regular")
+
     return jsonify(package), 200
 
 
@@ -82,6 +88,7 @@ def buy_product(type_product):
     if type_product not in protducts:
         return jsonify({"error": "Даннный продукт не найден"}), 400
     else:
-        product = SQL_request(f"SELECT * FROM {type_product} WHERE id = ?", (product_id,), fetch='one')
-        message, code = buy_products(g.user, product_id, type_product, quality)
+        pc_token = data.get('pc_token')
+        zone = get_computer_zone_by_token(pc_token)
+        message, code = buy_products(g.user, product_id, type_product, quality, zone=zone)
         return jsonify(message), code

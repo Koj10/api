@@ -44,12 +44,13 @@ def register_send_code(email):
         html_body=f"<p>Ваш код: <strong>{code}</strong></p>"
     )
 
-def buy_products(user, product_id, type_product, quality):
+def buy_products(user, product_id, type_product, quality, zone="regular"):
     product = SQL_request(f"SELECT * FROM {type_product} WHERE id = ?", params=(product_id,), fetch='one')
     if int(product['is_active']) == 0:
         return {"error":"Товар не доступен к покупке"}, 403
 
-    price = float(product['price']) * int(quality)
+    unit_price = resolve_package_price(product, zone)
+    price = unit_price * int(quality)
     if float(user['balance']) < price:
         return {"error":"Недостаточный баланс"}, 402
 
@@ -146,6 +147,26 @@ def normalize_computer_for_client(computer, repair=False):
         computer = dict(computer)
         computer["status"] = "занят"
     return computer
+
+
+def get_computer_zone_by_token(pc_token):
+    if not pc_token:
+        return "regular"
+    computer = SQL_request(
+        "SELECT zone FROM computers WHERE token = ?",
+        (pc_token,),
+        fetch="one",
+    )
+    if not computer:
+        return "regular"
+    zone = str(computer.get("zone") or "regular").lower()
+    return "vip" if zone == "vip" else "regular"
+
+
+def resolve_package_price(product, zone="regular"):
+    if str(zone).lower() == "vip":
+        return float(product.get("price_vip") or product.get("price") or 0)
+    return float(product.get("price") or 0)
 
 
 def add_time_to_datetime(old_time_str, time_delta_str):
