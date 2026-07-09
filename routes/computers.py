@@ -1,5 +1,6 @@
 from .main_routes import *
 from play_time import finalize_computer_session
+from utils import has_active_session, normalize_computer_for_client
 
 @api.route('/pc/register', methods=['GET'])
 def pc_register():
@@ -51,6 +52,10 @@ def edit_status():
         )
         return jsonify({"message": "Зона изменена"}), 200
 
+    if getattr(g, 'computer', None) and not getattr(g, 'user', None):
+        if has_active_session(computer) and status in ("заблокирован", "активен", "ремонт"):
+            return jsonify({"message": "Сессия активна", "status": "занят"}), 200
+
     if status == "активен":
         finalize_computer_session(computer, source="status_active")
         time = None
@@ -87,6 +92,7 @@ def get_status(pc_token):
     computer = SQL_request("SELECT * FROM computers WHERE token = ?", params=(pc_token,), fetch='one')
     if computer is None:
         return jsonify({"error":"Компьютер не найден"}), 404
+    computer = normalize_computer_for_client(computer, repair=True)
     return jsonify({"message":computer}), 200
 
 @api.route('/pc', methods=['GET'])
@@ -107,6 +113,7 @@ def get_pc():
         computer = SQL_request("SELECT * FROM computers WHERE token = ?", (token,), fetch='one')
 
         if computer:
+            computer = normalize_computer_for_client(computer, repair=True)
             return jsonify(computer), 200
         else:
             return jsonify({"error":"Компьютер не найден"}), 403

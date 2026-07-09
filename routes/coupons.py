@@ -250,7 +250,7 @@ def end_session_early():
     SQL_request(
         """
         UPDATE computers
-        SET status = 'активен',
+        SET status = 'заблокирован',
             time_active = NULL,
             user_active = NULL,
             session_started_at = NULL,

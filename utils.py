@@ -117,6 +117,37 @@ def session_time_base(computer):
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def has_active_session(computer):
+    if not computer:
+        return False
+    now = datetime.now()
+    started = parse_db_datetime(computer.get("session_started_at"))
+    duration = computer.get("session_duration_minutes")
+    if started and duration is not None:
+        ends = started + timedelta(minutes=int(duration))
+        if ends > now:
+            return True
+    ends_at = parse_db_datetime(computer.get("time_active"))
+    if ends_at and ends_at > now:
+        return True
+    return False
+
+
+def normalize_computer_for_client(computer, repair=False):
+    if not computer:
+        return computer
+    if has_active_session(computer) and computer.get("status") != "занят":
+        if repair:
+            SQL_request(
+                "UPDATE computers SET status = 'занят' WHERE id = ?",
+                params=(computer["id"],),
+                fetch="none",
+            )
+        computer = dict(computer)
+        computer["status"] = "занят"
+    return computer
+
+
 def add_time_to_datetime(old_time_str, time_delta_str):
     dt = parse_db_datetime(old_time_str) or datetime.now()
 
