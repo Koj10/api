@@ -108,44 +108,64 @@ def parse_db_datetime(value):
     return None
 
 
-def session_time_base(computer):
-    """Точка отсчёта для продления сессии: только активная неистёкшая сессия."""
-    if computer.get("status") != "занят":
+def get_session_end_at(computer):
+    """Единое время окончания сессии — максимум из всех полей."""
+    if not computer:
         return None
-    dt = parse_db_datetime(computer.get("time_active"))
-    if dt is None or dt <= datetime.now():
-        return None
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
+    candidates = []
+    started = parse_db_datetime(computer.get("session_started_at"))
+    duration = computer.get("session_duration_minutes")
+    if started is not None and duration is not None:
+        candidates.append(started + timedelta(minutes=int(duration)))
+    ends_at = parse_db_datetime(computer.get("time_active"))
+    if ends_at:
+        candidates.append(ends_at)
+    return max(candidates) if candidates else None
 
 
 def has_active_session(computer):
-    if not computer:
-        return False
-    now = datetime.now()
-    started = parse_db_datetime(computer.get("session_started_at"))
-    duration = computer.get("session_duration_minutes")
-    if started and duration is not None:
-        ends = started + timedelta(minutes=int(duration))
-        if ends > now:
-            return True
-    ends_at = parse_db_datetime(computer.get("time_active"))
-    if ends_at and ends_at > now:
-        return True
-    return False
+    end = get_session_end_at(computer)
+    return end is not None and end > datetime.now()
+
+
+def session_time_base(computer):
+    """Точка отсчёта для продления сессии: только активная неистёкшая сессия."""
+    end = get_session_end_at(computer)
+    if end is None or end <= datetime.now():
+        return None
+    return end.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def normalize_computer_for_client(computer, repair=False):
     if not computer:
         return computer
-    if has_active_session(computer) and computer.get("status") != "занят":
-        if repair:
-            SQL_request(
-                "UPDATE computers SET status = 'занят' WHERE id = ?",
-                params=(computer["id"],),
-                fetch="none",
-            )
-        computer = dict(computer)
+
+    computer = dict(computer)
+    if not has_active_session(computer):
+        return computer
+
+    ends_str = get_session_end_at(computer).strftime("%Y-%m-%d %H:%M:%S")
+    updates = []
+    params = []
+
+    if computer.get("time_active") != ends_str:
+        computer["time_active"] = ends_str
+        updates.append("time_active = ?")
+        params.append(ends_str)
+
+    if computer.get("status") != "занят":
         computer["status"] = "занят"
+        if repair:
+            updates.append("status = 'занят'")
+
+    if repair and updates:
+        params.append(computer["id"])
+        SQL_request(
+            f"UPDATE computers SET {', '.join(updates)} WHERE id = ?",
+            params=tuple(params),
+            fetch="none",
+        )
+
     return computer
 
 

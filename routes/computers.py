@@ -1,6 +1,6 @@
 from .main_routes import *
 from play_time import finalize_computer_session
-from utils import has_active_session, normalize_computer_for_client
+from utils import get_session_end_at, has_active_session, normalize_computer_for_client
 
 @api.route('/pc/register', methods=['GET'])
 def pc_register():
@@ -77,11 +77,22 @@ def edit_status():
 
     try:
         new_zone = zone or (computer.get("zone") or "regular")
-        SQL_request(
-            "UPDATE computers SET status = ?, time_active = ?, user_active = ?, zone = ? WHERE token = ?",
-            params=(status, time, user_id, new_zone, token),
-            fetch="none",
-        )
+        if has_active_session(computer):
+            session_end = get_session_end_at(computer)
+            if session_end:
+                time = session_end.strftime("%Y-%m-%d %H:%M:%S")
+            status = "занят"
+            SQL_request(
+                "UPDATE computers SET status = ?, time_active = ?, user_active = ?, zone = ? WHERE token = ?",
+                params=(status, time, user_id, new_zone, token),
+                fetch="none",
+            )
+        else:
+            SQL_request(
+                "UPDATE computers SET status = ?, time_active = ?, user_active = ?, zone = ? WHERE token = ?",
+                params=(status, time, user_id, new_zone, token),
+                fetch="none",
+            )
         return jsonify({"message":"Статус изменён"}), 200
     except Exception as e:
         logging.error(e)
@@ -105,6 +116,8 @@ def get_pc():
         for computer in computers:
             if 'token' in computer and g.user['role'] == 'user':
                 del computer['token']
+            if g.user['role'] == 'admin':
+                computer = normalize_computer_for_client(computer, repair=True)
             filtered_computers.append(computer)
         return jsonify(filtered_computers), 200
 

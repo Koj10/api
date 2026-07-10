@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 from database import DB_PATH
 from play_time import finalize_computer_session
+from utils import get_session_end_at, has_active_session, parse_db_datetime
 from .main_routes import *
 
 
@@ -94,11 +95,23 @@ def _coupon_aggregate(date_filter_sql, params=()):
 
 
 def _activate_package_on_pc(computer, package, user_id=None, db=None):
-    """Запускает сессию: счётчик = длительность пакета с момента активации."""
+    """Запускает или продлевает сессию на ПК."""
     duration_minutes = int(package["duration_minutes"])
-    started_at = datetime.now()
-    ends_at = started_at + timedelta(minutes=duration_minutes)
-    started_str = started_at.strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.now()
+
+    if has_active_session(computer):
+        current_end = get_session_end_at(computer)
+        started = parse_db_datetime(computer.get("session_started_at")) or now
+        ends_at = current_end + timedelta(minutes=duration_minutes)
+        started_str = started.strftime("%Y-%m-%d %H:%M:%S")
+        total_duration = int(computer.get("session_duration_minutes") or 0) + duration_minutes
+        user_id = user_id if user_id is not None else computer.get("user_active")
+    else:
+        started_at = now
+        ends_at = started_at + timedelta(minutes=duration_minutes)
+        started_str = started_at.strftime("%Y-%m-%d %H:%M:%S")
+        total_duration = duration_minutes
+
     ends_str = ends_at.strftime("%Y-%m-%d %H:%M:%S")
 
     query = """
@@ -110,7 +123,7 @@ def _activate_package_on_pc(computer, package, user_id=None, db=None):
             user_active = ?
         WHERE id = ?
     """
-    params = (started_str, duration_minutes, ends_str, user_id, computer["id"])
+    params = (started_str, total_duration, ends_str, user_id, computer["id"])
     if db is not None:
         db.execute(query, params)
         if db.rowcount == 0:
@@ -120,7 +133,7 @@ def _activate_package_on_pc(computer, package, user_id=None, db=None):
 
     return {
         "session_started_at": started_str,
-        "session_duration_minutes": duration_minutes,
+        "session_duration_minutes": total_duration,
         "time_active": ends_str,
     }
 
