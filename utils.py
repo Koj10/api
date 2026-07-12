@@ -43,7 +43,7 @@ def register_send_code(email):
         VALUES (?, ?, 'register')
     """, params=(email, code), fetch='none')
 
-    sent = send_email(
+    sent, mail_error = send_email(
         to_email=email,
         subject="Код подтверждения",
         text_body=f"Ваш код: {code}",
@@ -51,7 +51,8 @@ def register_send_code(email):
     )
     if not sent and DEBUG:
         logging.warning(
-            "DEBUG: письмо не отправлено, код подтверждения для %s: %s",
+            "DEBUG: письмо не отправлено (%s), код подтверждения для %s: %s",
+            mail_error or "неизвестная ошибка",
             email,
             code,
         )

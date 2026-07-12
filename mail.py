@@ -83,6 +83,20 @@ def _provider_configured(settings):
     return False
 
 
+def _parse_http_error_body(raw):
+    if not raw:
+        return ""
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw[:500]
+    if isinstance(data, dict):
+        message = data.get("message") or data.get("error") or data.get("detail")
+        if message:
+            return str(message)
+    return raw[:500]
+
+
 def _http_post_json(url, headers, payload, timeout=HTTP_TIMEOUT):
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
@@ -105,6 +119,29 @@ def _http_get_json(url, headers, timeout=HTTP_TIMEOUT):
         if not raw:
             return {}
         return json.loads(raw)
+
+
+def _brevo_sender_status(settings):
+    senders = _http_get_json(
+        "https://api.brevo.com/v3/senders",
+        {"api-key": settings["brevo_key"]},
+        timeout=15,
+    )
+    from_email = settings["from_email"].lower()
+    for sender in senders if isinstance(senders, list) else []:
+        email = (sender.get("email") or "").lower()
+        if email != from_email:
+            continue
+        if sender.get("active"):
+            return True, f"Отправитель {from_email} подтверждён в Brevo"
+        return False, (
+            f"Отправитель {from_email} добавлен в Brevo, но не подтверждён. "
+            "Откройте письмо от Brevo и нажмите ссылку подтверждения."
+        )
+    return False, (
+        f"Отправитель {from_email} не найден в Brevo → Senders. "
+        "Добавьте и подтвердите его в панели Brevo."
+    )
 
 
 def _send_via_brevo(settings, to_email, subject, text_body, html_body):
@@ -209,9 +246,10 @@ def _send_via_smtp(cfg, to_email, subject, text_body, html_body):
 
 
 def send_email(to_email, subject, text_body, html_body=None):
+    """Отправляет письмо. Возвращает (успех, текст_ошибки или None)."""
     if not to_email:
         logging.error("send_email: пустой адрес получателя")
-        return False
+        return False, "Пустой адрес получателя"
 
     settings = _mail_settings()
     if not _provider_configured(settings):
@@ -219,19 +257,24 @@ def send_email(to_email, subject, text_body, html_body=None):
             "Почта не настроена для провайдера %s. Проверьте .env (BREVO_API_KEY / RESEND_API_KEY / SMTP_*)",
             settings["provider"],
         )
-        return False
+        return False, "Почта не настроена на сервере"
 
     provider = settings["provider"]
     try:
         if provider == "brevo":
+            sender_ok, sender_detail = _brevo_sender_status(settings)
+            if not sender_ok:
+                logging.error("Brevo: %s", sender_detail)
+                return False, sender_detail
+
             _send_via_brevo(settings, to_email, subject, text_body, html_body)
             logging.info("Письмо отправлено на %s через Brevo API (тема: %s)", to_email, subject)
-            return True
+            return True, None
 
         if provider == "resend":
             _send_via_resend(settings, to_email, subject, text_body, html_body)
             logging.info("Письмо отправлено на %s через Resend API (тема: %s)", to_email, subject)
-            return True
+            return True, None
 
         if provider == "smtp":
             ok, port, error = _send_via_smtp(
@@ -245,30 +288,39 @@ def send_email(to_email, subject, text_body, html_body=None):
                     port,
                     subject,
                 )
-                return True
+                return True, None
             if isinstance(error, smtplib.SMTPAuthenticationError):
-                logging.error("SMTP: ошибка авторизации для %s: %s", settings["smtp"]["user"], error)
-            else:
-                logging.error("SMTP: отправка на %s не удалась: %s", to_email, error)
-            return False
+                detail = f"SMTP: ошибка авторизации для {settings['smtp']['user']}"
+                logging.error("%s: %s", detail, error)
+                return False, detail
+            detail = f"SMTP: отправка не удалась — {error}"
+            logging.error(detail)
+            return False, detail
 
-        logging.error("Неизвестный EMAIL_PROVIDER: %s", provider)
-        return False
+        detail = f"Неизвестный EMAIL_PROVIDER: {provider}"
+        logging.error(detail)
+        return False, detail
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        logging.error(
-            "Email API (%s): HTTP %s — %s",
-            provider,
-            exc.code,
-            detail[:500],
-        )
-        return False
+        detail = _parse_http_error_body(exc.read().decode("utf-8", errors="replace"))
+        message = f"Email API ({provider}) HTTP {exc.code}: {detail}"
+        logging.error(message)
+        return False, message
     except urllib.error.URLError as exc:
-        logging.error("Email API (%s): сеть недоступна — %s", provider, exc.reason)
-        return False
-    except Exception:
+        message = f"Email API ({provider}): сеть недоступна — {exc.reason}"
+        logging.error(message)
+        return False, message
+    except Exception as exc:
         logging.exception("Неожиданная ошибка отправки email на %s", to_email)
-        return False
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def send_test_email(to_email):
+    return send_email(
+        to_email,
+        "GameSense — тест почты",
+        "Если вы видите это письмо, отправка через API работает.",
+        "<p>Если вы видите это письмо, отправка через API работает.</p>",
+    )
 
 
 def email_provider_name():
@@ -290,8 +342,14 @@ def check_email_connection():
                 {"api-key": settings["brevo_key"]},
                 timeout=15,
             )
-            email = account.get("email", "ok")
-            return True, f"Brevo API доступен (аккаунт: {email}, from: {settings['from_email']})"
+            account_email = account.get("email", "ok")
+            sender_ok, sender_detail = _brevo_sender_status(settings)
+            if not sender_ok:
+                return False, sender_detail
+            return True, (
+                f"Brevo API доступен (аккаунт: {account_email}, from: {settings['from_email']}). "
+                f"{sender_detail}"
+            )
 
         if provider == "resend":
             _http_get_json(
