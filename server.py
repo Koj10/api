@@ -1,5 +1,8 @@
+from paths import load_app_env
+
+load_app_env()
+
 from flask import Flask
-from dotenv import load_dotenv
 from extensions import cors
 from routes.main_routes import *
 import config
@@ -7,9 +10,6 @@ import os
 import logging
 from utils import *
 from config import SECRET_KEY, JWT_ACCESS_EXPIRES_HOURS, ALLOWED_API_KEYS
-
-
-load_dotenv()
 
 # Проверка переменных окружения (DB_PATH необязателен — см. database.py)
 for var in config.required_env_vars:

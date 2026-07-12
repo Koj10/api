@@ -4,19 +4,33 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-from dotenv import load_dotenv
+from paths import load_app_env
 
-load_dotenv()
-
-SMTP_SERVER = os.getenv("SMTP_SERVER")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
-FROM_EMAIL = os.getenv("FROM_EMAIL") or SMTP_USER
+load_app_env()
 
 
-def _smtp_configured():
-    return all([SMTP_SERVER, SMTP_USER, SMTP_PASSWORD, FROM_EMAIL])
+def _smtp_config():
+    port_raw = os.getenv("SMTP_PORT", "587") or "587"
+    try:
+        port = int(port_raw)
+    except ValueError:
+        logging.error("SMTP_PORT имеет неверное значение: %r", port_raw)
+        port = 587
+
+    smtp_user = os.getenv("SMTP_USER")
+    from_email = os.getenv("FROM_EMAIL") or smtp_user
+
+    return {
+        "server": os.getenv("SMTP_SERVER"),
+        "port": port,
+        "user": smtp_user,
+        "password": os.getenv("SMTP_PASSWORD"),
+        "from_email": from_email,
+    }
+
+
+def _smtp_configured(cfg):
+    return all([cfg["server"], cfg["user"], cfg["password"], cfg["from_email"]])
 
 
 def send_email(to_email, subject, text_body, html_body=None):
@@ -24,14 +38,23 @@ def send_email(to_email, subject, text_body, html_body=None):
         logging.error("send_email: пустой адрес получателя")
         return False
 
-    if not _smtp_configured():
-        logging.error(
-            "SMTP не настроен. Задайте SMTP_SERVER, SMTP_USER, SMTP_PASSWORD и FROM_EMAIL в .env"
-        )
+    cfg = _smtp_config()
+    if not _smtp_configured(cfg):
+        missing = [
+            name
+            for name, key in (
+                ("SMTP_SERVER", "server"),
+                ("SMTP_USER", "user"),
+                ("SMTP_PASSWORD", "password"),
+                ("FROM_EMAIL", "from_email"),
+            )
+            if not cfg[key]
+        ]
+        logging.error("SMTP не настроен. Не заданы: %s", ", ".join(missing))
         return False
 
     msg = MIMEMultipart()
-    msg["From"] = FROM_EMAIL
+    msg["From"] = cfg["from_email"]
     msg["To"] = to_email
     msg["Subject"] = subject
     msg.attach(MIMEText(text_body or "", "plain"))
@@ -40,18 +63,36 @@ def send_email(to_email, subject, text_body, html_body=None):
         msg.attach(MIMEText(html_body, "html"))
 
     try:
-        if SMTP_PORT == 465:
-            with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, timeout=30) as server:
-                server.login(SMTP_USER, SMTP_PASSWORD)
-                server.sendmail(FROM_EMAIL, [to_email], msg.as_string())
+        if cfg["port"] == 465:
+            with smtplib.SMTP_SSL(cfg["server"], cfg["port"], timeout=30) as server:
+                server.login(cfg["user"], cfg["password"])
+                server.sendmail(cfg["from_email"], [to_email], msg.as_string())
         else:
-            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30) as server:
+            with smtplib.SMTP(cfg["server"], cfg["port"], timeout=30) as server:
                 server.ehlo()
                 server.starttls()
                 server.ehlo()
-                server.login(SMTP_USER, SMTP_PASSWORD)
-                server.sendmail(FROM_EMAIL, [to_email], msg.as_string())
+                server.login(cfg["user"], cfg["password"])
+                server.sendmail(cfg["from_email"], [to_email], msg.as_string())
+        logging.info("Письмо отправлено на %s (тема: %s)", to_email, subject)
         return True
+    except smtplib.SMTPAuthenticationError as exc:
+        logging.error(
+            "SMTP: ошибка авторизации для %s — проверьте SMTP_USER и пароль приложения Gmail: %s",
+            cfg["user"],
+            exc,
+        )
+        return False
+    except (smtplib.SMTPException, OSError, TimeoutError) as exc:
+        logging.error(
+            "SMTP: не удалось отправить письмо на %s через %s:%s — %s: %s",
+            to_email,
+            cfg["server"],
+            cfg["port"],
+            type(exc).__name__,
+            exc,
+        )
+        return False
     except Exception:
-        logging.exception("Ошибка отправки email на %s", to_email)
+        logging.exception("Неожиданная ошибка отправки email на %s", to_email)
         return False

@@ -1,5 +1,6 @@
 from database import *
 import logging
+import sys
 from cashback import credit_purchase_cashback
 from logging.handlers import RotatingFileHandler
 import random
@@ -23,6 +24,11 @@ file_handler.setFormatter(formatter)
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 logger.addHandler(file_handler)
+
+stream_handler = logging.StreamHandler(sys.stderr)
+stream_handler.setFormatter(formatter)
+if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
+    logger.addHandler(stream_handler)
 
 def generate_code(length=6):
     return ''.join(random.choices(string.digits, k=length))

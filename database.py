@@ -1,9 +1,10 @@
 import json
 import sqlite3
-from dotenv import load_dotenv
 import os
 
-load_dotenv()
+from paths import load_app_env
+
+load_app_env()
 
 # По умолчанию SQLite рядом с api/; в проде задайте DB_PATH в .env
 _DB_DIR = os.path.dirname(os.path.abspath(__file__))
