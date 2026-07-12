@@ -6,7 +6,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 import jwt
 import datetime
 import logging
-from mail import send_email
+from mail import send_email, check_smtp_connection
 from middleware import setup_middleware, auth_decorator
 import config
 from utils import *
@@ -26,6 +26,14 @@ api = Blueprint('api', __name__)
 @api.route('/', methods=['GET'])
 def example():
     return jsonify({"message": "API Работает"}), 200
+
+
+@api.route('/smtp-check', methods=['GET'])
+def smtp_check():
+    if not config.DEBUG:
+        abort(404)
+    ok, detail = check_smtp_connection()
+    return jsonify({"ok": ok, "detail": detail}), 200 if ok else 503
 
 @api.route('/images/<type_product>/<id_product>', methods=['GET'])
 def images(type_product, id_product):

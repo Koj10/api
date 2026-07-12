@@ -8,6 +8,7 @@ import os
 from flask import request, jsonify, abort, g
 from database import SQL_request
 from paths import log_path
+import config
 
 # === Настройка логгера для аудита ===
 audit_logger = logging.getLogger('audit')
@@ -117,6 +118,8 @@ def setup_middleware(app):
     @app.before_request
     def api_key_and_logging_middleware():
         excluded_routes = ['/', '/register', '/login', '/reset-password', '/pc/register', '/time_packages', '/payments/status']
+        if config.DEBUG:
+            excluded_routes.append('/smtp-check')
         if request.path in excluded_routes or request.method == 'OPTIONS':
             return None
 

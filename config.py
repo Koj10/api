@@ -1,5 +1,9 @@
 import os
 
+from paths import load_app_env
+
+load_app_env()
+
 VERSION = "test"
 SECRET_KEY = os.getenv("SECRET_KEY")
 JWT_ACCESS_EXPIRES_HOURS = int(os.getenv("JWT_ACCESS_EXPIRES_HOURS", "24"))

@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 import secrets
 import string
 import jwt
-from config import SECRET_KEY, JWT_ACCESS_EXPIRES_HOURS, ALLOWED_API_KEYS
+from config import SECRET_KEY, JWT_ACCESS_EXPIRES_HOURS, ALLOWED_API_KEYS, DEBUG
 from paths import log_path
 
 formatter = logging.Formatter('%(levelname)s [%(asctime)s]   %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
@@ -43,12 +43,19 @@ def register_send_code(email):
         VALUES (?, ?, 'register')
     """, params=(email, code), fetch='none')
 
-    return send_email(
+    sent = send_email(
         to_email=email,
         subject="Код подтверждения",
         text_body=f"Ваш код: {code}",
         html_body=f"<p>Ваш код: <strong>{code}</strong></p>"
     )
+    if not sent and DEBUG:
+        logging.warning(
+            "DEBUG: письмо не отправлено, код подтверждения для %s: %s",
+            email,
+            code,
+        )
+    return sent
 
 def buy_products(user, product_id, type_product, quality, zone="regular"):
     product = SQL_request(f"SELECT * FROM {type_product} WHERE id = ?", params=(product_id,), fetch='one')
