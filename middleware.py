@@ -113,14 +113,45 @@ def auth_decorator(role='bonus', check_self=True):
     return decorator
 
 
+# Маршруты без JWT и без X-API-Key
+PUBLIC_ROUTES = frozenset({
+    "/",
+    "/register",
+    "/login",
+    "/reset-password",
+    "/verify-code/send",
+    "/verify-code",
+    "/pc/register",
+    "/time_packages",
+    "/payments/status",
+})
+
+PUBLIC_ROUTE_PREFIXES = (
+    "/images/",
+    "/pc/status/",
+)
+
+DEBUG_ONLY_ROUTES = frozenset({
+    "/mail-check",
+    "/smtp-check",
+})
+
+
+def _is_public_route(path, method, debug):
+    if method == "OPTIONS":
+        return True
+    if path in PUBLIC_ROUTES:
+        return True
+    if debug and path in DEBUG_ONLY_ROUTES:
+        return True
+    return any(path.startswith(prefix) for prefix in PUBLIC_ROUTE_PREFIXES)
+
+
 # === Middleware для автоматической проверки API-ключа и логирования ===
 def setup_middleware(app):
     @app.before_request
     def api_key_and_logging_middleware():
-        excluded_routes = ['/', '/register', '/login', '/reset-password', '/pc/register', '/time_packages', '/payments/status']
-        if config.DEBUG:
-            excluded_routes.append('/smtp-check')
-        if request.path in excluded_routes or request.method == 'OPTIONS':
+        if _is_public_route(request.path, request.method, config.DEBUG):
             return None
 
         if request.url_rule and request.url_rule.rule.startswith('/images/'):
@@ -129,19 +160,19 @@ def setup_middleware(app):
         # Проверка на наличие JWT токена
         auth_header = request.headers.get('Authorization')
         if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(" ")[1]
+            token = auth_header.split(" ", 1)[1].strip()
+            if not token:
+                return jsonify({"error": "JWT токен отсутствует"}), 401
             try:
-                # Здесь должен быть секрет из конфига
                 decoded = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
-                # Если токен валиден, мы его принимаем как авторизацию
-                request.user = decoded  # Можно сохранить данные пользователя
+                request.user = decoded
                 return None
             except jwt.ExpiredSignatureError:
                 return jsonify({"error": "Срок действия токена истёк"}), 401
             except jwt.InvalidTokenError:
                 return jsonify({"error": "Неверный токен"}), 401
 
-        # Если JWT нет — проверяем API ключ
+        # Если JWT нет — проверяем API ключ (для десктоп-клиента и внутренних сервисов)
         api_key = request.headers.get('X-API-Key')
         if not api_key:
             return jsonify({"error": "API ключ отсутствует"}), 401
@@ -149,7 +180,6 @@ def setup_middleware(app):
         if api_key not in app.config.get('ALLOWED_API_KEYS', []):
             return jsonify({"error": "Неверный API ключ"}), 403
 
-        # Сохраняем время начала запроса
         request._start_time = datetime.now()
         return None
 

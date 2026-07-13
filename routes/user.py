@@ -430,7 +430,7 @@ def reset_password():
         algorithm="HS256",
     )
 
-    sent = send_email(
+    sent, mail_error = send_email(
         to_email=email,
         subject="Восстановление пароля",
         text_body=f"Перейдите по ссылке для восстановления пароля:\nhttps://pc.game-sense.ru/reset-password/{token}",
@@ -441,7 +441,10 @@ def reset_password():
         ),
     )
     if not sent:
-        return jsonify({"error": "Не удалось отправить письмо. Попробуйте позже"}), 503
+        payload = {"error": "Не удалось отправить письмо. Попробуйте позже"}
+        if config.DEBUG and mail_error:
+            payload["detail"] = mail_error
+        return jsonify(payload), 503
 
     return jsonify(
         {"message": "Ссылка для восстановления пароля отправлена на почту"}

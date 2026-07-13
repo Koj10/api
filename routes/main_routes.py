@@ -6,7 +6,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 import jwt
 import datetime
 import logging
-from mail import send_email, check_smtp_connection
+from mail import send_email, check_email_connection, email_provider_name, send_test_email
 from middleware import setup_middleware, auth_decorator
 import config
 from utils import *
@@ -28,12 +28,22 @@ def example():
     return jsonify({"message": "API Работает"}), 200
 
 
+@api.route('/mail-check', methods=['GET'])
 @api.route('/smtp-check', methods=['GET'])
-def smtp_check():
+def mail_check():
     if not config.DEBUG:
         abort(404)
-    ok, detail = check_smtp_connection()
-    return jsonify({"ok": ok, "detail": detail}), 200 if ok else 503
+    test_email = (request.args.get("test") or "").strip().lower()
+    if test_email:
+        ok, detail = send_test_email(test_email)
+        return jsonify({
+            "ok": ok,
+            "detail": detail or "Тестовое письмо отправлено",
+            "provider": email_provider_name(),
+            "test_email": test_email,
+        }), 200 if ok else 503
+    ok, detail = check_email_connection()
+    return jsonify({"ok": ok, "detail": detail, "provider": email_provider_name()}), 200 if ok else 503
 
 @api.route('/images/<type_product>/<id_product>', methods=['GET'])
 def images(type_product, id_product):
