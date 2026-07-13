@@ -16,7 +16,7 @@ def _smtp_config():
         port = int(port_raw)
     except ValueError:
         logging.error("SMTP_PORT имеет неверное значение: %r", port_raw)
-        port = 587
+        port = 2000
 
     smtp_user = os.getenv("SMTP_USER")
     from_email = os.getenv("FROM_EMAIL") or smtp_user
