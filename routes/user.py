@@ -165,7 +165,12 @@ def send_verify_code():
     if not user:
         return jsonify({"error": "Пользователь не найден"}), 404
 
-    sent, mail_error = register_send_code(email)
+    try:
+        sent, mail_error = register_send_code(email)
+    except Exception as exc:
+        logging.exception("verify-code/send: %s", exc)
+        return jsonify({"error": "Ошибка при отправке кода"}), 500
+
     if not sent:
         return jsonify({
             "error": mail_error or "Не удалось отправить письмо. Проверьте настройки почты на сервере"

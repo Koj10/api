@@ -2,7 +2,7 @@ from paths import load_app_env
 
 load_app_env()
 
-from flask import Flask
+from flask import Flask, jsonify
 from extensions import cors
 from routes.main_routes import *
 import config
@@ -22,6 +22,11 @@ def create_app():
 
     # Регистрация расширений
     cors.init_app(app)
+
+    @app.errorhandler(500)
+    def handle_internal_error(error):
+        logging.exception("Internal server error: %s", error)
+        return jsonify({"error": "Внутренняя ошибка сервера"}), 500
 
     # Регистрация blueprint'ов
     app.register_blueprint(api)

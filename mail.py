@@ -10,6 +10,8 @@ from paths import load_app_env
 
 load_app_env()
 
+SMTP_CONNECT_TIMEOUT = int(os.getenv("SMTP_CONNECT_TIMEOUT", "8"))
+
 
 def _normalize_secret(value):
     if not value:
@@ -60,7 +62,9 @@ class SMTPSSLIPv4(smtplib.SMTP_SSL):
         return self.context.wrap_socket(sock, server_hostname=host)
 
 
-def _open_smtp(cfg, timeout=30):
+def _open_smtp(cfg, timeout=None):
+    if timeout is None:
+        timeout = SMTP_CONNECT_TIMEOUT
     if cfg["port"] == 465:
         return SMTPSSLIPv4(cfg["server"], cfg["port"], timeout=timeout)
     return SMTPIPv4(cfg["server"], cfg["port"], timeout=timeout)
@@ -74,6 +78,20 @@ def _ports_to_try(primary_port):
     return (primary_port,)
 
 
+def _smtp_error_detail(cfg, port, error):
+    if isinstance(error, smtplib.SMTPAuthenticationError):
+        return (
+            f"SMTP: ошибка авторизации для {cfg['user']}. "
+            "Для Gmail используйте пароль приложения: https://myaccount.google.com/apppasswords"
+        )
+    if isinstance(error, (TimeoutError, OSError)):
+        return (
+            f"SMTP: не удалось подключиться к {cfg['server']}:{port} ({type(error).__name__}). "
+            "Проверьте SMTP_* в .env. На VPS часто блокируют порты 587/465 — тогда Gmail с сервера не работает."
+        )
+    return f"SMTP: отправка не удалась — {error}"
+
+
 def _send_via_smtp(cfg, to_email, subject, text_body, html_body):
     msg = MIMEMultipart()
     msg["From"] = cfg["from_email"]
@@ -84,7 +102,9 @@ def _send_via_smtp(cfg, to_email, subject, text_body, html_body):
         msg.attach(MIMEText(html_body, "html"))
 
     last_error = None
+    last_port = cfg["port"]
     for port in _ports_to_try(cfg["port"]):
+        last_port = port
         attempt_cfg = {**cfg, "port": port}
         try:
             with _open_smtp(attempt_cfg) as server:
@@ -106,7 +126,7 @@ def _send_via_smtp(cfg, to_email, subject, text_body, html_body):
                 type(exc).__name__,
                 exc,
             )
-    return False, cfg["port"], last_error
+    return False, last_port, last_error
 
 
 def send_email(to_email, subject, text_body, html_body=None):
@@ -134,13 +154,10 @@ def send_email(to_email, subject, text_body, html_body=None):
             )
             return True, None
         if isinstance(error, smtplib.SMTPAuthenticationError):
-            detail = (
-                f"SMTP: ошибка авторизации для {cfg['user']}. "
-                "Для Gmail используйте пароль приложения: https://myaccount.google.com/apppasswords"
-            )
+            detail = _smtp_error_detail(cfg, port, error)
             logging.error("%s: %s", detail, error)
             return False, detail
-        detail = f"SMTP: отправка не удалась — {error}"
+        detail = _smtp_error_detail(cfg, port, error)
         logging.error(detail)
         return False, detail
     except Exception as exc:
@@ -168,10 +185,12 @@ def check_email_connection():
         return False, "SMTP: не хватает переменных в .env (SMTP_USER, SMTP_PASSWORD, FROM_EMAIL)"
 
     last_error = None
+    last_port = cfg["port"]
     for port in _ports_to_try(cfg["port"]):
+        last_port = port
         attempt_cfg = {**cfg, "port": port}
         try:
-            with _open_smtp(attempt_cfg, timeout=15) as server:
+            with _open_smtp(attempt_cfg) as server:
                 if port != 465:
                     server.ehlo()
                     server.starttls(context=ssl.create_default_context())
@@ -179,14 +198,13 @@ def check_email_connection():
                 server.login(attempt_cfg["user"], attempt_cfg["password"])
             return True, f"SMTP {cfg['server']}:{port} (IPv4) — OK, from: {cfg['from_email']}"
         except smtplib.SMTPAuthenticationError as exc:
-            return False, (
-                f"SMTP: ошибка авторизации на порту {port}: {exc}. "
-                "Для Gmail нужен пароль приложения, не обычный пароль."
-            )
+            return False, _smtp_error_detail(cfg, port, exc)
         except (smtplib.SMTPException, OSError, TimeoutError) as exc:
             last_error = exc
 
-    return False, f"{type(last_error).__name__}: {last_error}"
+    if last_error is None:
+        return False, "SMTP: не удалось подключиться"
+    return False, _smtp_error_detail(cfg, last_port, last_error)
 
 
 check_smtp_connection = check_email_connection
