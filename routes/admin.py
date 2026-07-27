@@ -35,7 +35,7 @@ def user_profile(user_id):
 @auth_decorator("admin")
 def profiles():
     user = SQL_request(
-        "SELECT * FROM users WHERE phone_confirmed = 1 ORDER BY id DESC",
+        "SELECT * FROM users WHERE email_confirmed = 1 ORDER BY id DESC",
         fetch="all",
     )
     return jsonify(user), 200

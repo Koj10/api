@@ -44,7 +44,7 @@ def _get_active_user(user_id):
         """
         SELECT id, first_name, last_name, tag
         FROM users
-        WHERE id = ? AND phone_confirmed = 1 AND is_active = 1
+        WHERE id = ? AND email_confirmed = 1 AND is_active = 1
         """,
         (user_id,),
         fetch="one",
@@ -81,7 +81,7 @@ def view_user_profile(user_id):
         """
         SELECT id, first_name, last_name, tag, profile_public, play_time_minutes
         FROM users
-        WHERE id = ? AND phone_confirmed = 1 AND is_active = 1
+        WHERE id = ? AND email_confirmed = 1 AND is_active = 1
         """,
         (user_id,),
         fetch="one",
@@ -123,7 +123,7 @@ def list_friends():
             """
             SELECT id, first_name, last_name, tag, play_time_minutes
             FROM users
-            WHERE id = ? AND phone_confirmed = 1 AND is_active = 1
+            WHERE id = ? AND email_confirmed = 1 AND is_active = 1
             """,
             (row["user_id"],),
             fetch="one",
@@ -152,7 +152,7 @@ def list_friend_requests():
         FROM friendships f
         JOIN users u ON u.id = f.requester_id
         WHERE f.addressee_id = ? AND f.status = 'pending'
-          AND u.phone_confirmed = 1 AND u.is_active = 1
+          AND u.email_confirmed = 1 AND u.is_active = 1
         ORDER BY datetime(f.created_at) DESC
         """,
         (me_id,),
@@ -165,7 +165,7 @@ def list_friend_requests():
         FROM friendships f
         JOIN users u ON u.id = f.addressee_id
         WHERE f.requester_id = ? AND f.status = 'pending'
-          AND u.phone_confirmed = 1 AND u.is_active = 1
+          AND u.email_confirmed = 1 AND u.is_active = 1
         ORDER BY datetime(f.created_at) DESC
         """,
         (me_id,),
@@ -216,7 +216,7 @@ def search_users():
         SELECT id, first_name, last_name, tag, profile_public
         FROM users
         WHERE id != ?
-          AND phone_confirmed = 1
+          AND email_confirmed = 1
           AND is_active = 1
           AND (
               first_name LIKE ? COLLATE NOCASE

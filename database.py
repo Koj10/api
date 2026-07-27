@@ -354,6 +354,21 @@ ensure_play_time_columns()
 ensure_play_sessions_table()
 ensure_cashback_column()
 
-from phone_verify import ensure_phone_verification_schema
 
-ensure_phone_verification_schema()
+def ensure_email_confirmed_sync():
+    columns = {
+        row["name"]
+        for row in (SQL_request("PRAGMA table_info(users)", fetch="all") or [])
+    }
+    if "phone_confirmed" in columns:
+        SQL_request(
+            """
+            UPDATE users SET email_confirmed = 1
+            WHERE phone_confirmed = 1
+              AND (email_confirmed = 0 OR email_confirmed IS NULL)
+            """,
+            fetch="none",
+        )
+
+
+ensure_email_confirmed_sync()

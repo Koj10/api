@@ -12,12 +12,7 @@ from user_tags import (
 )
 from date_format import parse_date_dmy
 from phone import normalize_phone
-from phone_auth import phone_profile_fields, resolve_phone_from_request, user_by_phone
-from phone_verify import ensure_phone_verification_schema, send_registration_code
 import datetime
-
-
-ensure_phone_verification_schema()
 
 
 @api.route("/login", methods=["POST"])
@@ -76,16 +71,16 @@ def login():
 def register():
     data = request.get_json()
 
-    required_fields = ["first_name", "last_name", "email", "phone_number", "password"]
+    required_fields = ["first_name", "last_name", "email", "password"]
     for field in required_fields:
         if not data.get(field):
             return jsonify({"error": f"Поле '{field}' обязательно"}), 400
 
     email = data["email"].strip().lower()
-    phone_number = normalize_phone(data.get("phone_number"))
     password = data["password"]
+    phone_number = normalize_phone(data.get("phone_number")) if data.get("phone_number") else None
 
-    if not phone_number:
+    if data.get("phone_number") and not phone_number:
         return jsonify({"error": "Некорректный номер телефона. Формат: +7XXXXXXXXXX"}), 400
 
     existing_user = SQL_request(
@@ -94,13 +89,14 @@ def register():
     if existing_user:
         return jsonify({"error": "Пользователь с таким email уже существует"}), 400
 
-    existing_phone = SQL_request(
-        "SELECT id FROM users WHERE phone_number = ?",
-        params=(phone_number,),
-        fetch="one",
-    )
-    if existing_phone:
-        return jsonify({"error": "Пользователь с таким номером телефона уже существует"}), 400
+    if phone_number:
+        existing_phone = SQL_request(
+            "SELECT id FROM users WHERE phone_number = ?",
+            params=(phone_number,),
+            fetch="one",
+        )
+        if existing_phone:
+            return jsonify({"error": "Пользователь с таким номером телефона уже существует"}), 400
 
     # Хэшируем пароль
     hashed_password = generate_password_hash(password)
@@ -158,51 +154,62 @@ def register():
 @api.route("/verify-code/send", methods=["POST"])
 def send_verify_code():
     data = request.get_json(silent=True) or {}
-    jwt_payload = None
+    email = (data.get("email") or "").strip().lower()
 
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         try:
             token = auth_header.split(" ", 1)[1]
-            jwt_payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+            payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+            user_id = payload.get("user_id")
+            if user_id not in (None, "computer", "password"):
+                user = SQL_request(
+                    "SELECT email FROM users WHERE id = ?",
+                    params=(user_id,),
+                    fetch="one",
+                )
+                if user:
+                    email = user["email"]
         except Exception:
             pass
 
-    phone = resolve_phone_from_request(data, jwt_payload)
-    if not phone:
-        return jsonify({"error": "Некорректный номер телефона"}), 400
+    if not email or "@" not in email:
+        return jsonify({"error": "Некорректный email"}), 400
 
-    user = user_by_phone(phone)
+    user = SQL_request(
+        "SELECT id FROM users WHERE email = ?",
+        params=(email,),
+        fetch="one",
+    )
     if not user:
         return jsonify({"error": "Пользователь не найден"}), 404
 
-    ok, error = send_registration_code(phone)
-    if not ok:
-        payload = {"error": "Не удалось отправить SMS. Проверьте настройки SMS на сервере"}
-        if config.DEBUG and error:
-            payload["detail"] = error
+    sent, mail_error = register_send_code(email)
+    if not sent:
+        payload = {"error": "Не удалось отправить письмо. Проверьте настройки почты на сервере"}
+        if config.DEBUG and mail_error:
+            payload["detail"] = mail_error
         return jsonify(payload), 503
 
-    return jsonify({"message": "Код отправлен на телефон"}), 200
+    return jsonify({"message": "Код отправлен на почту"}), 200
 
 
 @api.route("/verify-code", methods=["POST"])
 def verify_code():
     data = request.get_json(silent=True) or {}
-    phone = normalize_phone(data.get("phone"))
+    email = (data.get("email") or "").strip().lower()
     code = (data.get("code") or "").strip()
 
-    if not phone or not code:
-        return jsonify({"error": "Телефон и код обязательны"}), 400
+    if not email or not code:
+        return jsonify({"error": "Email и код обязательны"}), 400
 
     record = SQL_request(
         """
         SELECT * FROM verification_codes
-        WHERE phone = ? AND code = ? AND type = 'register'
-          AND datetime(created_at) > datetime('now', '-15 minutes')
+        WHERE email = ? AND code = ? AND type = 'register'
         ORDER BY created_at DESC LIMIT 1
     """,
-        params=(phone, code),
+        params=(email, code),
         fetch="one",
     )
 
@@ -223,14 +230,14 @@ def verify_code():
 
     SQL_request(
         """
-        UPDATE users SET phone_confirmed = 1
-        WHERE phone_number = ?
+        UPDATE users SET email_confirmed = TRUE
+        WHERE email = ?
     """,
-        params=(phone,),
+        params=(email,),
         fetch="none",
     )
 
-    return jsonify({"message": "Телефон подтверждён"}), 200
+    return jsonify({"message": "Email подтверждён"}), 200
 
 
 @api.route("/profile", methods=["GET"])
@@ -252,8 +259,8 @@ def profile():
             "last_name": fresh_user["last_name"],
             "balance": fresh_user["balance"],
             "inventory": fresh_user["inventory"],
-            "email_confirmed": bool(fresh_user.get("phone_confirmed")),
-            **phone_profile_fields(fresh_user),
+            "email_confirmed": fresh_user["email_confirmed"],
+            "phone_number": fresh_user.get("phone_number"),
             "role": fresh_user["role"],
             "profile_public": bool(fresh_user.get("profile_public")),
             **bonus_profile_fields(fresh_user),

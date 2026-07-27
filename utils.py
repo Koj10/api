@@ -6,6 +6,7 @@ from logging.handlers import RotatingFileHandler
 import random
 import string
 import secrets
+from mail import send_email
 import json
 from datetime import datetime, timedelta
 import secrets
@@ -34,6 +35,28 @@ def generate_code(length=6):
 
 def generate_token(length=32):
     return secrets.token_hex(length)
+
+def register_send_code(email):
+    code = generate_code()
+    SQL_request("""
+        INSERT INTO verification_codes (email, code, type)
+        VALUES (?, ?, 'register')
+    """, params=(email, code), fetch='none')
+
+    sent, mail_error = send_email(
+        to_email=email,
+        subject="Код подтверждения",
+        text_body=f"Ваш код: {code}",
+        html_body=f"<p>Ваш код: <strong>{code}</strong></p>"
+    )
+    if not sent and DEBUG:
+        logging.warning(
+            "DEBUG: письмо не отправлено (%s), код подтверждения для %s: %s",
+            mail_error or "неизвестная ошибка",
+            email,
+            code,
+        )
+    return sent, mail_error
 
 def buy_products(user, product_id, type_product, quality, zone="regular"):
     product = SQL_request(f"SELECT * FROM {type_product} WHERE id = ?", params=(product_id,), fetch='one')

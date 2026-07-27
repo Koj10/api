@@ -134,7 +134,6 @@ PUBLIC_ROUTE_PREFIXES = (
 DEBUG_ONLY_ROUTES = frozenset({
     "/mail-check",
     "/smtp-check",
-    "/sms-check",
 })
 
 

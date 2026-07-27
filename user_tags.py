@@ -71,7 +71,7 @@ def get_user_by_tag(tag):
         """
         SELECT id, first_name, last_name, tag
         FROM users
-        WHERE tag = ? AND phone_confirmed = 1 AND is_active = 1
+        WHERE tag = ? AND email_confirmed = 1 AND is_active = 1
         """,
         params=(normalized,),
         fetch="one",
