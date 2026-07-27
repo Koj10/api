@@ -11,7 +11,13 @@ from user_tags import (
     validate_tag,
 )
 from date_format import parse_date_dmy
+from phone import normalize_phone
+from phone_auth import phone_profile_fields, resolve_phone_from_request, user_by_phone
+from phone_verify import ensure_phone_verification_schema, send_registration_code
 import datetime
+
+
+ensure_phone_verification_schema()
 
 
 @api.route("/login", methods=["POST"])
@@ -27,12 +33,14 @@ def login():
     user = SQL_request(
         "SELECT * FROM users WHERE email = ?", params=(identifier,), fetch="one"
     )
-    if not user and "@" not in identifier:  # Если это не email, попробуем телефон
-        user = SQL_request(
-            "SELECT * FROM users WHERE phone_number = ?",
-            params=(identifier,),
-            fetch="one",
-        )
+    if not user and "@" not in identifier:
+        phone = normalize_phone(identifier)
+        if phone:
+            user = SQL_request(
+                "SELECT * FROM users WHERE phone_number = ?",
+                params=(phone,),
+                fetch="one",
+            )
 
     if not user:
         return jsonify({"error": "Пользователь не найден"}), 404
@@ -68,20 +76,31 @@ def login():
 def register():
     data = request.get_json()
 
-    required_fields = ["first_name", "last_name", "email", "password"]
+    required_fields = ["first_name", "last_name", "email", "phone_number", "password"]
     for field in required_fields:
         if not data.get(field):
             return jsonify({"error": f"Поле '{field}' обязательно"}), 400
 
     email = data["email"].strip().lower()
+    phone_number = normalize_phone(data.get("phone_number"))
     password = data["password"]
 
-    # Проверяем, существует ли пользователь
+    if not phone_number:
+        return jsonify({"error": "Некорректный номер телефона. Формат: +7XXXXXXXXXX"}), 400
+
     existing_user = SQL_request(
         "SELECT id FROM users WHERE email = ?", params=(email,), fetch="one"
     )
     if existing_user:
         return jsonify({"error": "Пользователь с таким email уже существует"}), 400
+
+    existing_phone = SQL_request(
+        "SELECT id FROM users WHERE phone_number = ?",
+        params=(phone_number,),
+        fetch="one",
+    )
+    if existing_phone:
+        return jsonify({"error": "Пользователь с таким номером телефона уже существует"}), 400
 
     # Хэшируем пароль
     hashed_password = generate_password_hash(password)
@@ -106,7 +125,7 @@ def register():
                 data.get("middle_name"),
                 data.get("last_name"),
                 email,
-                data.get("phone_number"),
+                phone_number,
                 hashed_password,
                 birthday_iso,
                 data.get("gender", "male"),
@@ -139,58 +158,51 @@ def register():
 @api.route("/verify-code/send", methods=["POST"])
 def send_verify_code():
     data = request.get_json(silent=True) or {}
-    email = (data.get("email") or "").strip().lower()
+    jwt_payload = None
 
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         try:
             token = auth_header.split(" ", 1)[1]
-            payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
-            user_id = payload.get("user_id")
-            if user_id not in (None, "computer", "password"):
-                user = SQL_request(
-                    "SELECT email FROM users WHERE id = ?",
-                    params=(user_id,),
-                    fetch="one",
-                )
-                if user:
-                    email = user["email"]
+            jwt_payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
         except Exception:
             pass
 
-    if not email or "@" not in email:
-        return jsonify({"error": "Некорректный email"}), 400
+    phone = resolve_phone_from_request(data, jwt_payload)
+    if not phone:
+        return jsonify({"error": "Некорректный номер телефона"}), 400
 
-    user = SQL_request(
-        "SELECT id FROM users WHERE email = ?",
-        params=(email,),
-        fetch="one",
-    )
+    user = user_by_phone(phone)
     if not user:
         return jsonify({"error": "Пользователь не найден"}), 404
 
-    if not register_send_code(email):
-        return jsonify({"error": "Не удалось отправить письмо. Проверьте настройки почты на сервере"}), 503
+    ok, error = send_registration_code(phone)
+    if not ok:
+        payload = {"error": "Не удалось отправить SMS. Проверьте настройки SMS на сервере"}
+        if config.DEBUG and error:
+            payload["detail"] = error
+        return jsonify(payload), 503
 
-    return jsonify({"message": "Код отправлен"}), 200
+    return jsonify({"message": "Код отправлен на телефон"}), 200
 
 
 @api.route("/verify-code", methods=["POST"])
 def verify_code():
-    data = request.get_json()
-    email = data.get("email")
-    code = data.get("code")
+    data = request.get_json(silent=True) or {}
+    phone = normalize_phone(data.get("phone"))
+    code = (data.get("code") or "").strip()
 
-    if not email or not code:
-        return jsonify({"error": "Email и код обязательны"}), 400
+    if not phone or not code:
+        return jsonify({"error": "Телефон и код обязательны"}), 400
 
     record = SQL_request(
         """
         SELECT * FROM verification_codes
-        WHERE email = ? AND code = ? AND type = 'register'
+        WHERE phone = ? AND code = ? AND type = 'register'
+          AND datetime(created_at) > datetime('now', '-15 minutes')
         ORDER BY created_at DESC LIMIT 1
     """,
-        params=(email, code),
+        params=(phone, code),
         fetch="one",
     )
 
@@ -200,7 +212,6 @@ def verify_code():
     if record["is_used"]:
         return jsonify({"error": "Этот код уже использован"}), 400
 
-    # Обновляем запись как использованную
     SQL_request(
         """
         UPDATE verification_codes SET is_used = TRUE
@@ -212,14 +223,14 @@ def verify_code():
 
     SQL_request(
         """
-        UPDATE users SET email_confirmed = TRUE
-        WHERE email = ?
+        UPDATE users SET phone_confirmed = 1
+        WHERE phone_number = ?
     """,
-        params=(email,),
+        params=(phone,),
         fetch="none",
     )
 
-    return jsonify({"message": "Email подтверждён"}), 200
+    return jsonify({"message": "Телефон подтверждён"}), 200
 
 
 @api.route("/profile", methods=["GET"])
@@ -241,7 +252,8 @@ def profile():
             "last_name": fresh_user["last_name"],
             "balance": fresh_user["balance"],
             "inventory": fresh_user["inventory"],
-            "email_confirmed": fresh_user["email_confirmed"],
+            "email_confirmed": bool(fresh_user.get("phone_confirmed")),
+            **phone_profile_fields(fresh_user),
             "role": fresh_user["role"],
             "profile_public": bool(fresh_user.get("profile_public")),
             **bonus_profile_fields(fresh_user),
@@ -433,11 +445,11 @@ def reset_password():
     sent, mail_error = send_email(
         to_email=email,
         subject="Восстановление пароля",
-        text_body=f"Перейдите по ссылке для восстановления пароля:\nhttps://pc.game-sense.ru/reset-password/{token}",
+        text_body=f"Перейдите по ссылке для восстановления пароля:\n{config.PUBLIC_SITE_URL}/reset-password/{token}",
         html_body=(
-            f'<p>Перейдите по <a href="https://pc.game-sense.ru/reset-password/{token}">ссылке</a> '
+            f'<p>Перейдите по <a href="{config.PUBLIC_SITE_URL}/reset-password/{token}">ссылке</a> '
             f"для восстановления пароля</p>"
-            f"<p>https://pc.game-sense.ru/reset-password/{token}</p>"
+            f"<p>{config.PUBLIC_SITE_URL}/reset-password/{token}</p>"
         ),
     )
     if not sent:

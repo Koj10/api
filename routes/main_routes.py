@@ -7,6 +7,7 @@ import jwt
 import datetime
 import logging
 from mail import send_email, check_email_connection, email_provider_name, send_test_email
+from sms import check_sms_connection, send_sms, sms_provider_name
 from middleware import setup_middleware, auth_decorator
 import config
 from utils import *
@@ -44,6 +45,23 @@ def mail_check():
         }), 200 if ok else 503
     ok, detail = check_email_connection()
     return jsonify({"ok": ok, "detail": detail, "provider": email_provider_name()}), 200 if ok else 503
+
+
+@api.route('/sms-check', methods=['GET'])
+def sms_check():
+    if not config.DEBUG:
+        abort(404)
+    test_phone = (request.args.get("test") or "").strip()
+    if test_phone:
+        ok, detail = send_sms(test_phone, "GameSense — тест SMS")
+        return jsonify({
+            "ok": ok,
+            "detail": detail or "Тестовое SMS отправлено",
+            "provider": sms_provider_name(),
+            "test_phone": test_phone,
+        }), 200 if ok else 503
+    ok, detail = check_sms_connection()
+    return jsonify({"ok": ok, "detail": detail, "provider": sms_provider_name()}), 200 if ok else 503
 
 @api.route('/images/<type_product>/<id_product>', methods=['GET'])
 def images(type_product, id_product):

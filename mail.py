@@ -41,13 +41,6 @@ def _mail_settings():
         else:
             provider = "smtp"
 
-    # На VPS с закрытыми SMTP-портами явно задайте EMAIL_PROVIDER=brevo
-    if provider == "smtp" and brevo_key:
-        logging.warning(
-            "EMAIL_PROVIDER=smtp, но задан BREVO_API_KEY. "
-            "Если SMTP-порты закрыты, установите EMAIL_PROVIDER=brevo"
-        )
-
     return {
         "provider": provider,
         "from_email": from_email,
@@ -128,41 +121,26 @@ def _http_get_json(url, headers, timeout=HTTP_TIMEOUT):
         return json.loads(raw)
 
 
-def _brevo_list_senders(settings):
-    data = _http_get_json(
+def _brevo_sender_status(settings):
+    senders = _http_get_json(
         "https://api.brevo.com/v3/senders",
-        {"api-key": settings["brevo_key"], "accept": "application/json"},
+        {"api-key": settings["brevo_key"]},
         timeout=15,
     )
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
-        return data.get("senders") or []
-    return []
-
-
-def _brevo_sender_status(settings):
-    items = _brevo_list_senders(settings)
     from_email = settings["from_email"].lower()
-
-    for sender in items:
+    for sender in senders if isinstance(senders, list) else []:
         email = (sender.get("email") or "").lower()
         if email != from_email:
             continue
         if sender.get("active"):
             return True, f"Отправитель {from_email} подтверждён в Brevo"
         return False, (
-            f"Отправитель {from_email} добавлен в Brevo, но не активен (active=false). "
+            f"Отправитель {from_email} добавлен в Brevo, но не подтверждён. "
             "Откройте письмо от Brevo и нажмите ссылку подтверждения."
         )
-
-    available = ", ".join(
-        f"{s.get('email', '?')} ({'active' if s.get('active') else 'pending'})"
-        for s in items[:8]
-    ) or "нет отправителей"
     return False, (
         f"Отправитель {from_email} не найден в Brevo → Senders. "
-        f"Доступные в аккаунте: {available}"
+        "Добавьте и подтвердите его в панели Brevo."
     )
 
 
@@ -326,7 +304,7 @@ def send_email(to_email, subject, text_body, html_body=None):
         detail = _parse_http_error_body(exc.read().decode("utf-8", errors="replace"))
         message = f"Email API ({provider}) HTTP {exc.code}: {detail}"
         logging.error(message)
-        return False, message
+        return False, detail
     except urllib.error.URLError as exc:
         message = f"Email API ({provider}): сеть недоступна — {exc.reason}"
         logging.error(message)

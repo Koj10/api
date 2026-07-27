@@ -26,7 +26,7 @@ def payments():
             "capture": True,
             "confirmation": {
                 "type": "redirect",
-                "return_url": "https://pc.game-sense.ru/shop"
+                "return_url": f"{config.PUBLIC_SITE_URL}/shop"
             },
             "description": "Пополнение баланса",
             "receipt": {

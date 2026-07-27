@@ -353,3 +353,7 @@ ensure_tag_column()
 ensure_play_time_columns()
 ensure_play_sessions_table()
 ensure_cashback_column()
+
+from phone_verify import ensure_phone_verification_schema
+
+ensure_phone_verification_schema()
