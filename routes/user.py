@@ -11,31 +11,23 @@ from user_tags import (
     validate_tag,
 )
 from date_format import parse_date_dmy
-from phone import normalize_phone
 import datetime
 
 
 @api.route("/login", methods=["POST"])
 def login():
     data = request.get_json()
-    identifier = data.get("identifier")  # Может быть email или телефон
+    email = (data.get("email") or data.get("identifier") or "").strip().lower()
     password = data.get("password")
 
-    if not identifier or not password:
-        return jsonify({"error": "Email/телефон и пароль обязательны"}), 400
+    if not email or not password:
+        return jsonify({"error": "Email и пароль обязательны"}), 400
 
-    # Поиск по email
     user = SQL_request(
-        "SELECT * FROM users WHERE email = ?", params=(identifier,), fetch="one"
+        "SELECT * FROM users WHERE lower(email) = lower(?)",
+        params=(email,),
+        fetch="one",
     )
-    if not user and "@" not in identifier:
-        phone = normalize_phone(identifier)
-        if phone:
-            user = SQL_request(
-                "SELECT * FROM users WHERE phone_number = ?",
-                params=(phone,),
-                fetch="one",
-            )
 
     if not user:
         return jsonify({"error": "Пользователь не найден"}), 404
@@ -78,25 +70,14 @@ def register():
 
     email = data["email"].strip().lower()
     password = data["password"]
-    phone_number = normalize_phone(data.get("phone_number")) if data.get("phone_number") else None
-
-    if data.get("phone_number") and not phone_number:
-        return jsonify({"error": "Некорректный номер телефона. Формат: +7XXXXXXXXXX"}), 400
 
     existing_user = SQL_request(
-        "SELECT id FROM users WHERE email = ?", params=(email,), fetch="one"
+        "SELECT id FROM users WHERE lower(email) = lower(?)",
+        params=(email,),
+        fetch="one",
     )
     if existing_user:
         return jsonify({"error": "Пользователь с таким email уже существует"}), 400
-
-    if phone_number:
-        existing_phone = SQL_request(
-            "SELECT id FROM users WHERE phone_number = ?",
-            params=(phone_number,),
-            fetch="one",
-        )
-        if existing_phone:
-            return jsonify({"error": "Пользователь с таким номером телефона уже существует"}), 400
 
     # Хэшируем пароль
     hashed_password = generate_password_hash(password)
@@ -121,7 +102,7 @@ def register():
                 data.get("middle_name"),
                 data.get("last_name"),
                 email,
-                phone_number,
+                None,
                 hashed_password,
                 birthday_iso,
                 data.get("gender", "male"),
