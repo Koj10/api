@@ -158,7 +158,7 @@ def send_verify_code():
         return jsonify({"error": "Некорректный email"}), 400
 
     user = SQL_request(
-        "SELECT id FROM users WHERE email = ?",
+        "SELECT id FROM users WHERE lower(email) = lower(?)",
         params=(email,),
         fetch="one",
     )
@@ -167,10 +167,9 @@ def send_verify_code():
 
     sent, mail_error = register_send_code(email)
     if not sent:
-        payload = {"error": "Не удалось отправить письмо. Проверьте настройки почты на сервере"}
-        if config.DEBUG and mail_error:
-            payload["detail"] = mail_error
-        return jsonify(payload), 503
+        return jsonify({
+            "error": mail_error or "Не удалось отправить письмо. Проверьте настройки почты на сервере"
+        }), 503
 
     return jsonify({"message": "Код отправлен на почту"}), 200
 

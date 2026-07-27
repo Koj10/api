@@ -1,11 +1,8 @@
-import json
 import logging
 import os
 import socket
 import smtplib
 import ssl
-import urllib.error
-import urllib.request
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -13,42 +10,12 @@ from paths import load_app_env
 
 load_app_env()
 
-BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
-RESEND_API_URL = "https://api.resend.com/emails"
-HTTP_TIMEOUT = 30
-
 
 def _normalize_secret(value):
     if not value:
         return ""
     cleaned = value.strip().strip('"').strip("'")
     return cleaned.replace(" ", "")
-
-
-def _mail_settings():
-    provider = (os.getenv("EMAIL_PROVIDER") or "auto").strip().lower()
-    from_email = (os.getenv("FROM_EMAIL") or os.getenv("SMTP_USER") or "").strip()
-    from_name = (os.getenv("FROM_NAME") or "GameSense").strip()
-
-    brevo_key = _normalize_secret(os.getenv("BREVO_API_KEY"))
-    resend_key = _normalize_secret(os.getenv("RESEND_API_KEY"))
-
-    if provider == "auto":
-        if brevo_key:
-            provider = "brevo"
-        elif resend_key:
-            provider = "resend"
-        else:
-            provider = "smtp"
-
-    return {
-        "provider": provider,
-        "from_email": from_email,
-        "from_name": from_name,
-        "brevo_key": brevo_key,
-        "resend_key": resend_key,
-        "smtp": _smtp_config(),
-    }
 
 
 def _smtp_config(port_override=None):
@@ -63,7 +30,7 @@ def _smtp_config(port_override=None):
     from_email = (os.getenv("FROM_EMAIL") or smtp_user or "").strip()
 
     return {
-        "server": (os.getenv("SMTP_SERVER") or "").strip(),
+        "server": (os.getenv("SMTP_SERVER") or "smtp.gmail.com").strip(),
         "port": port,
         "user": smtp_user,
         "password": _normalize_secret(os.getenv("SMTP_PASSWORD")),
@@ -71,111 +38,8 @@ def _smtp_config(port_override=None):
     }
 
 
-def _provider_configured(settings):
-    provider = settings["provider"]
-    if provider == "brevo":
-        return bool(settings["brevo_key"] and settings["from_email"])
-    if provider == "resend":
-        return bool(settings["resend_key"] and settings["from_email"])
-    if provider == "smtp":
-        cfg = settings["smtp"]
-        return all([cfg["server"], cfg["user"], cfg["password"], cfg["from_email"]])
-    return False
-
-
-def _parse_http_error_body(raw):
-    if not raw:
-        return ""
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        return raw[:500]
-    if isinstance(data, dict):
-        message = data.get("message") or data.get("error") or data.get("detail")
-        if message:
-            return str(message)
-    return raw[:500]
-
-
-def _http_post_json(url, headers, payload, timeout=HTTP_TIMEOUT):
-    body = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        url,
-        data=body,
-        headers={**headers, "Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        raw = response.read().decode("utf-8")
-        if not raw:
-            return {}
-        return json.loads(raw)
-
-
-def _http_get_json(url, headers, timeout=HTTP_TIMEOUT):
-    request = urllib.request.Request(url, headers=headers, method="GET")
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        raw = response.read().decode("utf-8")
-        if not raw:
-            return {}
-        return json.loads(raw)
-
-
-def _brevo_sender_status(settings):
-    senders = _http_get_json(
-        "https://api.brevo.com/v3/senders",
-        {"api-key": settings["brevo_key"]},
-        timeout=15,
-    )
-    from_email = settings["from_email"].lower()
-    for sender in senders if isinstance(senders, list) else []:
-        email = (sender.get("email") or "").lower()
-        if email != from_email:
-            continue
-        if sender.get("active"):
-            return True, f"Отправитель {from_email} подтверждён в Brevo"
-        return False, (
-            f"Отправитель {from_email} добавлен в Brevo, но не подтверждён. "
-            "Откройте письмо от Brevo и нажмите ссылку подтверждения."
-        )
-    return False, (
-        f"Отправитель {from_email} не найден в Brevo → Senders. "
-        "Добавьте и подтвердите его в панели Brevo."
-    )
-
-
-def _send_via_brevo(settings, to_email, subject, text_body, html_body):
-    payload = {
-        "sender": {"name": settings["from_name"], "email": settings["from_email"]},
-        "to": [{"email": to_email}],
-        "subject": subject,
-        "textContent": text_body or "",
-    }
-    if html_body:
-        payload["htmlContent"] = html_body
-
-    _http_post_json(
-        BREVO_API_URL,
-        {"api-key": settings["brevo_key"]},
-        payload,
-    )
-
-
-def _send_via_resend(settings, to_email, subject, text_body, html_body):
-    payload = {
-        "from": f'{settings["from_name"]} <{settings["from_email"]}>',
-        "to": [to_email],
-        "subject": subject,
-        "text": text_body or "",
-    }
-    if html_body:
-        payload["html"] = html_body
-
-    _http_post_json(
-        RESEND_API_URL,
-        {"Authorization": f'Bearer {settings["resend_key"]}'},
-        payload,
-    )
+def _smtp_configured(cfg):
+    return all([cfg["server"], cfg["user"], cfg["password"], cfg["from_email"]])
 
 
 def _ipv4_socket(host, port, timeout):
@@ -246,69 +110,39 @@ def _send_via_smtp(cfg, to_email, subject, text_body, html_body):
 
 
 def send_email(to_email, subject, text_body, html_body=None):
-    """Отправляет письмо. Возвращает (успех, текст_ошибки или None)."""
+    """Отправляет письмо через SMTP (Gmail). Возвращает (успех, текст_ошибки или None)."""
     if not to_email:
         logging.error("send_email: пустой адрес получателя")
         return False, "Пустой адрес получателя"
 
-    settings = _mail_settings()
-    if not _provider_configured(settings):
+    cfg = _smtp_config()
+    if not _smtp_configured(cfg):
         logging.error(
-            "Почта не настроена для провайдера %s. Проверьте .env (BREVO_API_KEY / RESEND_API_KEY / SMTP_*)",
-            settings["provider"],
+            "SMTP не настроен. Проверьте .env: SMTP_SERVER, SMTP_USER, SMTP_PASSWORD, FROM_EMAIL"
         )
-        return False, "Почта не настроена на сервере"
+        return False, "Почта не настроена на сервере (SMTP)"
 
-    provider = settings["provider"]
     try:
-        if provider == "brevo":
-            sender_ok, sender_detail = _brevo_sender_status(settings)
-            if not sender_ok:
-                logging.error("Brevo: %s", sender_detail)
-                return False, sender_detail
-
-            _send_via_brevo(settings, to_email, subject, text_body, html_body)
-            logging.info("Письмо отправлено на %s через Brevo API (тема: %s)", to_email, subject)
-            return True, None
-
-        if provider == "resend":
-            _send_via_resend(settings, to_email, subject, text_body, html_body)
-            logging.info("Письмо отправлено на %s через Resend API (тема: %s)", to_email, subject)
-            return True, None
-
-        if provider == "smtp":
-            ok, port, error = _send_via_smtp(
-                settings["smtp"], to_email, subject, text_body, html_body
+        ok, port, error = _send_via_smtp(cfg, to_email, subject, text_body, html_body)
+        if ok:
+            logging.info(
+                "Письмо отправлено на %s через SMTP %s:%s (тема: %s)",
+                to_email,
+                cfg["server"],
+                port,
+                subject,
             )
-            if ok:
-                logging.info(
-                    "Письмо отправлено на %s через SMTP %s:%s (тема: %s)",
-                    to_email,
-                    settings["smtp"]["server"],
-                    port,
-                    subject,
-                )
-                return True, None
-            if isinstance(error, smtplib.SMTPAuthenticationError):
-                detail = f"SMTP: ошибка авторизации для {settings['smtp']['user']}"
-                logging.error("%s: %s", detail, error)
-                return False, detail
-            detail = f"SMTP: отправка не удалась — {error}"
-            logging.error(detail)
+            return True, None
+        if isinstance(error, smtplib.SMTPAuthenticationError):
+            detail = (
+                f"SMTP: ошибка авторизации для {cfg['user']}. "
+                "Для Gmail используйте пароль приложения: https://myaccount.google.com/apppasswords"
+            )
+            logging.error("%s: %s", detail, error)
             return False, detail
-
-        detail = f"Неизвестный EMAIL_PROVIDER: {provider}"
+        detail = f"SMTP: отправка не удалась — {error}"
         logging.error(detail)
         return False, detail
-    except urllib.error.HTTPError as exc:
-        detail = _parse_http_error_body(exc.read().decode("utf-8", errors="replace"))
-        message = f"Email API ({provider}) HTTP {exc.code}: {detail}"
-        logging.error(message)
-        return False, detail
-    except urllib.error.URLError as exc:
-        message = f"Email API ({provider}): сеть недоступна — {exc.reason}"
-        logging.error(message)
-        return False, message
     except Exception as exc:
         logging.exception("Неожиданная ошибка отправки email на %s", to_email)
         return False, f"{type(exc).__name__}: {exc}"
@@ -318,75 +152,41 @@ def send_test_email(to_email):
     return send_email(
         to_email,
         "GameSense — тест почты",
-        "Если вы видите это письмо, отправка через API работает.",
-        "<p>Если вы видите это письмо, отправка через API работает.</p>",
+        "Если вы видите это письмо, отправка через SMTP работает.",
+        "<p>Если вы видите это письмо, отправка через SMTP работает.</p>",
     )
 
 
 def email_provider_name():
-    return _mail_settings()["provider"]
+    return "smtp"
 
 
 def check_email_connection():
-    """Проверка настроек и доступности выбранного провайдера почты."""
-    settings = _mail_settings()
-    provider = settings["provider"]
+    """Проверка настроек и доступности SMTP."""
+    cfg = _smtp_config()
+    if not _smtp_configured(cfg):
+        return False, "SMTP: не хватает переменных в .env (SMTP_USER, SMTP_PASSWORD, FROM_EMAIL)"
 
-    if not _provider_configured(settings):
-        return False, f"Провайдер {provider}: не хватает переменных в .env"
-
-    try:
-        if provider == "brevo":
-            account = _http_get_json(
-                "https://api.brevo.com/v3/account",
-                {"api-key": settings["brevo_key"]},
-                timeout=15,
+    last_error = None
+    for port in _ports_to_try(cfg["port"]):
+        attempt_cfg = {**cfg, "port": port}
+        try:
+            with _open_smtp(attempt_cfg, timeout=15) as server:
+                if port != 465:
+                    server.ehlo()
+                    server.starttls(context=ssl.create_default_context())
+                    server.ehlo()
+                server.login(attempt_cfg["user"], attempt_cfg["password"])
+            return True, f"SMTP {cfg['server']}:{port} (IPv4) — OK, from: {cfg['from_email']}"
+        except smtplib.SMTPAuthenticationError as exc:
+            return False, (
+                f"SMTP: ошибка авторизации на порту {port}: {exc}. "
+                "Для Gmail нужен пароль приложения, не обычный пароль."
             )
-            account_email = account.get("email", "ok")
-            sender_ok, sender_detail = _brevo_sender_status(settings)
-            if not sender_ok:
-                return False, sender_detail
-            return True, (
-                f"Brevo API доступен (аккаунт: {account_email}, from: {settings['from_email']}). "
-                f"{sender_detail}"
-            )
+        except (smtplib.SMTPException, OSError, TimeoutError) as exc:
+            last_error = exc
 
-        if provider == "resend":
-            _http_get_json(
-                "https://api.resend.com/domains",
-                {"Authorization": f'Bearer {settings["resend_key"]}'},
-                timeout=15,
-            )
-            return True, f"Resend API доступен (from: {settings['from_email']})"
-
-        if provider == "smtp":
-            cfg = settings["smtp"]
-            last_error = None
-            for port in _ports_to_try(cfg["port"]):
-                attempt_cfg = {**cfg, "port": port}
-                try:
-                    with _open_smtp(attempt_cfg, timeout=15) as server:
-                        if port != 465:
-                            server.ehlo()
-                            server.starttls(context=ssl.create_default_context())
-                            server.ehlo()
-                        server.login(attempt_cfg["user"], attempt_cfg["password"])
-                    return True, f"SMTP {cfg['server']}:{port} (IPv4) — OK"
-                except smtplib.SMTPAuthenticationError as exc:
-                    return False, f"SMTP: ошибка авторизации на порту {port}: {exc}"
-                except (smtplib.SMTPException, OSError, TimeoutError) as exc:
-                    last_error = exc
-            return False, f"{type(last_error).__name__}: {last_error}"
-
-        return False, f"Неизвестный провайдер: {provider}"
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        return False, f"{provider} API HTTP {exc.code}: {detail[:300]}"
-    except urllib.error.URLError as exc:
-        return False, f"{provider} API: {exc.reason}"
-    except Exception as exc:
-        return False, f"{type(exc).__name__}: {exc}"
+    return False, f"{type(last_error).__name__}: {last_error}"
 
 
-# Обратная совместимость для старых импортов
 check_smtp_connection = check_email_connection
