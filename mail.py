@@ -88,12 +88,22 @@ def _parse_http_error_body(raw):
     return raw[:500]
 
 
+def _http_headers(extra=None):
+    headers = {
+        "User-Agent": "GameSense-Mail/1.0",
+        "Accept": "application/json",
+    }
+    if extra:
+        headers.update(extra)
+    return headers
+
+
 def _http_post_json(url, headers, payload, timeout=HTTP_TIMEOUT):
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
         url,
         data=body,
-        headers={**headers, "Content-Type": "application/json"},
+        headers={**_http_headers(headers), "Content-Type": "application/json"},
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -104,7 +114,7 @@ def _http_post_json(url, headers, payload, timeout=HTTP_TIMEOUT):
 
 
 def _http_get_json(url, headers, timeout=HTTP_TIMEOUT):
-    request = urllib.request.Request(url, headers=headers, method="GET")
+    request = urllib.request.Request(url, headers=_http_headers(headers), method="GET")
     with urllib.request.urlopen(request, timeout=timeout) as response:
         raw = response.read().decode("utf-8")
         if not raw:
@@ -115,6 +125,11 @@ def _http_get_json(url, headers, timeout=HTTP_TIMEOUT):
 def _resend_error_detail(raw_detail):
     detail = raw_detail or "неизвестная ошибка Resend"
     lowered = detail.lower()
+    if "1010" in lowered:
+        return (
+            "Resend/Cloudflare отклонил запрос (1010). "
+            "Обновите API до последней версии mail.py или проверьте RESEND_API_KEY в контейнере."
+        )
     if "domain" in lowered and ("verify" in lowered or "verified" in lowered):
         return (
             f"{detail} "

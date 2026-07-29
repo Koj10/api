@@ -1,6 +1,7 @@
 services:
   api:
-    image: ghcr.io/koj10/api:1.0.3
+    build: .
+    image: gs-api:local
     container_name: gs_api
     restart: unless-stopped
     ports:
