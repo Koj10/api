@@ -13,7 +13,7 @@ from paths import load_app_env
 
 load_app_env()
 
-BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
+RESEND_API_URL = "https://api.resend.com/emails"
 HTTP_TIMEOUT = 15
 SMTP_CONNECT_TIMEOUT = int(os.getenv("SMTP_CONNECT_TIMEOUT", "8"))
 
@@ -29,11 +29,11 @@ def _mail_settings():
     provider = (os.getenv("EMAIL_PROVIDER") or "auto").strip().lower()
     from_email = (os.getenv("FROM_EMAIL") or os.getenv("SMTP_USER") or "").strip()
     from_name = (os.getenv("FROM_NAME") or "GameSense").strip()
-    brevo_key = _normalize_secret(os.getenv("BREVO_API_KEY"))
+    resend_key = _normalize_secret(os.getenv("RESEND_API_KEY"))
 
     if provider == "auto":
-        if brevo_key and from_email:
-            provider = "brevo"
+        if resend_key and from_email:
+            provider = "resend"
         else:
             provider = "smtp"
 
@@ -41,7 +41,7 @@ def _mail_settings():
         "provider": provider,
         "from_email": from_email,
         "from_name": from_name,
-        "brevo_key": brevo_key,
+        "resend_key": resend_key,
         "smtp": _smtp_config(),
     }
 
@@ -70,8 +70,8 @@ def _smtp_configured(cfg):
     return all([cfg["server"], cfg["user"], cfg["password"], cfg["from_email"]])
 
 
-def _brevo_configured(settings):
-    return bool(settings["brevo_key"] and settings["from_email"])
+def _resend_configured(settings):
+    return bool(settings["resend_key"] and settings["from_email"])
 
 
 def _parse_http_error_body(raw):
@@ -112,38 +112,40 @@ def _http_get_json(url, headers, timeout=HTTP_TIMEOUT):
         return json.loads(raw)
 
 
-def _brevo_error_detail(raw_detail):
-    detail = raw_detail or "неизвестная ошибка Brevo"
-    if "unrecognised ip" in detail.lower():
+def _resend_error_detail(raw_detail):
+    detail = raw_detail or "неизвестная ошибка Resend"
+    lowered = detail.lower()
+    if "domain" in lowered and ("verify" in lowered or "verified" in lowered):
         return (
-            "Brevo отклонил запрос: IP сервера не в списке разрешённых. "
-            "Добавьте IP VPS: https://app.brevo.com/security/authorised_ips"
+            f"{detail} "
+            "Добавьте и подтвердите домен в Resend → Domains, "
+            "или для теста используйте FROM_EMAIL=onboarding@resend.dev"
         )
     return detail
 
 
-def _send_via_brevo(settings, to_email, subject, text_body, html_body):
+def _send_via_resend(settings, to_email, subject, text_body, html_body):
     payload = {
-        "sender": {"name": settings["from_name"], "email": settings["from_email"]},
-        "to": [{"email": to_email}],
+        "from": f'{settings["from_name"]} <{settings["from_email"]}>',
+        "to": [to_email],
         "subject": subject,
-        "textContent": text_body or "",
+        "text": text_body or "",
     }
     if html_body:
-        payload["htmlContent"] = html_body
+        payload["html"] = html_body
 
     try:
         _http_post_json(
-            BREVO_API_URL,
-            {"api-key": settings["brevo_key"]},
+            RESEND_API_URL,
+            {"Authorization": f'Bearer {settings["resend_key"]}'},
             payload,
         )
         return True, None
     except urllib.error.HTTPError as exc:
         detail = _parse_http_error_body(exc.read().decode("utf-8", errors="replace"))
-        return False, _brevo_error_detail(detail)
+        return False, _resend_error_detail(detail)
     except urllib.error.URLError as exc:
-        return False, f"Brevo API: сеть недоступна — {exc.reason}"
+        return False, f"Resend API: сеть недоступна — {exc.reason}"
 
 
 def _ipv4_socket(host, port, timeout):
@@ -184,12 +186,12 @@ def _smtp_error_detail(cfg, port, error):
     if isinstance(error, smtplib.SMTPAuthenticationError):
         return (
             f"SMTP: ошибка авторизации для {cfg['user']}. "
-            "Для Gmail используйте пароль приложения: https://myaccount.google.com/apppasswords"
+            "Gmail — пароль приложения; Yandex — пароль приложения в настройках почты."
         )
     if isinstance(error, (TimeoutError, OSError)):
         return (
             f"SMTP: не удалось подключиться к {cfg['server']}:{port} ({type(error).__name__}). "
-            "На VPS часто блокируют порты 587/465 — используйте Brevo (EMAIL_PROVIDER=brevo)."
+            "На VPS часто блокируют 587/465 — используйте Resend (EMAIL_PROVIDER=resend)."
         )
     return f"SMTP: отправка не удалась — {error}"
 
@@ -236,7 +238,7 @@ def _smtp_connection_error(error):
 
 
 def send_email(to_email, subject, text_body, html_body=None):
-    """Отправляет письмо. SMTP или Brevo API. Возвращает (успех, текст_ошибки или None)."""
+    """Отправляет письмо через Resend API или SMTP. Возвращает (успех, ошибка)."""
     if not to_email:
         logging.error("send_email: пустой адрес получателя")
         return False, "Пустой адрес получателя"
@@ -244,22 +246,22 @@ def send_email(to_email, subject, text_body, html_body=None):
     settings = _mail_settings()
     provider = settings["provider"]
 
-    if provider == "brevo":
-        if not _brevo_configured(settings):
-            return False, "Brevo не настроен: нужны BREVO_API_KEY и FROM_EMAIL в .env"
-        ok, error = _send_via_brevo(settings, to_email, subject, text_body, html_body)
+    if provider == "resend":
+        if not _resend_configured(settings):
+            return False, "Resend не настроен: нужны RESEND_API_KEY и FROM_EMAIL в .env"
+        ok, error = _send_via_resend(settings, to_email, subject, text_body, html_body)
         if ok:
-            logging.info("Письмо отправлено на %s через Brevo API (тема: %s)", to_email, subject)
+            logging.info("Письмо отправлено на %s через Resend (тема: %s)", to_email, subject)
         return ok, error
 
     cfg = settings["smtp"]
     if not _smtp_configured(cfg):
-        if _brevo_configured(settings):
-            ok, error = _send_via_brevo(settings, to_email, subject, text_body, html_body)
+        if _resend_configured(settings):
+            ok, error = _send_via_resend(settings, to_email, subject, text_body, html_body)
             if ok:
-                logging.info("Письмо отправлено на %s через Brevo API (тема: %s)", to_email, subject)
+                logging.info("Письмо отправлено на %s через Resend (тема: %s)", to_email, subject)
             return ok, error
-        return False, "Почта не настроена: SMTP_* или BREVO_API_KEY в .env"
+        return False, "Почта не настроена: SMTP_* или RESEND_API_KEY в .env"
 
     try:
         ok, port, error = _send_via_smtp(cfg, to_email, subject, text_body, html_body)
@@ -273,13 +275,15 @@ def send_email(to_email, subject, text_body, html_body=None):
             )
             return True, None
 
-        if _smtp_connection_error(error) and _brevo_configured(settings):
-            logging.warning("SMTP недоступен, пробуем Brevo API для %s", to_email)
-            brevo_ok, brevo_error = _send_via_brevo(settings, to_email, subject, text_body, html_body)
-            if brevo_ok:
-                logging.info("Письмо отправлено на %s через Brevo API (fallback)", to_email)
+        if _smtp_connection_error(error) and _resend_configured(settings):
+            logging.warning("SMTP недоступен, пробуем Resend для %s", to_email)
+            resend_ok, resend_error = _send_via_resend(
+                settings, to_email, subject, text_body, html_body
+            )
+            if resend_ok:
+                logging.info("Письмо отправлено на %s через Resend (fallback)", to_email)
                 return True, None
-            return False, brevo_error or _smtp_error_detail(cfg, port, error)
+            return False, resend_error or _smtp_error_detail(cfg, port, error)
 
         detail = _smtp_error_detail(cfg, port, error)
         logging.error(detail)
@@ -302,35 +306,37 @@ def email_provider_name():
     return _mail_settings()["provider"]
 
 
-def _check_brevo(settings):
-    if not _brevo_configured(settings):
-        return False, "Brevo: нужны BREVO_API_KEY и FROM_EMAIL"
+def _check_resend(settings):
+    if not _resend_configured(settings):
+        return False, "Resend: нужны RESEND_API_KEY и FROM_EMAIL"
     try:
-        account = _http_get_json(
-            "https://api.brevo.com/v3/account",
-            {"api-key": settings["brevo_key"]},
+        _http_get_json(
+            "https://api.resend.com/domains",
+            {"Authorization": f'Bearer {settings["resend_key"]}'},
             timeout=15,
         )
-        account_email = account.get("email", "ok")
-        return True, f"Brevo API OK (аккаунт: {account_email}, from: {settings['from_email']})"
+        return True, (
+            f"Resend API OK (from: {settings['from_email']}). "
+            "Проверка отправки: /mail-check?test=ваш@email.com"
+        )
     except urllib.error.HTTPError as exc:
         detail = _parse_http_error_body(exc.read().decode("utf-8", errors="replace"))
-        return False, _brevo_error_detail(detail)
+        return False, _resend_error_detail(detail)
     except urllib.error.URLError as exc:
-        return False, f"Brevo API: {exc.reason}"
+        return False, f"Resend API: {exc.reason}"
 
 
 def check_email_connection():
     settings = _mail_settings()
     provider = settings["provider"]
 
-    if provider == "brevo":
-        return _check_brevo(settings)
+    if provider == "resend":
+        return _check_resend(settings)
 
     cfg = settings["smtp"]
     if not _smtp_configured(cfg):
-        if _brevo_configured(settings):
-            return _check_brevo(settings)
+        if _resend_configured(settings):
+            return _check_resend(settings)
         return False, "SMTP: не хватает SMTP_USER, SMTP_PASSWORD, FROM_EMAIL"
 
     last_error = None
@@ -351,10 +357,10 @@ def check_email_connection():
         except (smtplib.SMTPException, OSError, TimeoutError) as exc:
             last_error = exc
 
-    if last_error and _smtp_connection_error(last_error) and _brevo_configured(settings):
-        ok, detail = _check_brevo(settings)
+    if last_error and _smtp_connection_error(last_error) and _resend_configured(settings):
+        ok, detail = _check_resend(settings)
         if ok:
-            return True, f"SMTP недоступен, но Brevo fallback OK. {detail}"
+            return True, f"SMTP недоступен, но Resend OK. {detail}"
         return False, detail
 
     if last_error is None:
