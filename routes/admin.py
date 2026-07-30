@@ -88,6 +88,11 @@ def _revenue_kind_clause(columns, alias=""):
     return ""
 
 
+def _revenue_date_filter(date_filter_sql):
+    """Фильтр по дате для JOIN с users — без rt. SQLite: ambiguous column name."""
+    return date_filter_sql.replace("created_at", "rt.created_at")
+
+
 def _get_transactions(rt_filter, pay_filter, params=()):
     _ensure_revenue_transactions_table()
     columns = _revenue_table_columns()
@@ -100,6 +105,7 @@ def _get_transactions(rt_filter, pay_filter, params=()):
     kind_select = "rt.kind" if "kind" in columns else "'topup' AS kind"
     pm_select = "rt.payment_method" if "payment_method" in columns else "'cash' AS payment_method"
 
+    revenue_filter = _revenue_date_filter(rt_filter)
     manual = []
     try:
         manual = SQL_request(
@@ -117,7 +123,7 @@ def _get_transactions(rt_filter, pay_filter, params=()):
             FROM revenue_transactions rt
             LEFT JOIN users u ON u.id = rt.user_id
             {admin_join}
-            WHERE {rt_filter}
+            WHERE {revenue_filter}
             ORDER BY datetime(rt.created_at) DESC
             LIMIT 500
             """,
