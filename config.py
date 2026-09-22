@@ -17,3 +17,4 @@ PUBLIC_LANDING_URL = os.getenv("PUBLIC_LANDING_URL", "https://gamesense-club.ru"
 PUBLIC_SITE_URL = os.getenv("PUBLIC_SITE_URL", "https://pc.gamesense-club.ru").rstrip("/")
 PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "https://api.gamesense-club.ru").rstrip("/")
 CORS_EXTRA_ORIGINS = os.getenv("CORS_EXTRA_ORIGINS", "")
+CLUB_MAINTENANCE_PIN = os.getenv("CLUB_MAINTENANCE_PIN", "").strip()

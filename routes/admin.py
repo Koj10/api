@@ -1,5 +1,6 @@
 import sqlite3
 import logging
+import config
 from urllib.parse import unquote
 
 from database import DB_PATH
@@ -676,3 +677,171 @@ def add_time_package():
         return jsonify({
             "error": str(e)
         }), 500
+
+
+def _close_open_maintenance(computer_id):
+    SQL_request(
+        """
+        UPDATE maintenance_sessions
+        SET ended_at = CURRENT_TIMESTAMP
+        WHERE computer_id = ? AND ended_at IS NULL
+        """,
+        (computer_id,),
+        fetch="none",
+    )
+
+
+@api.route("/admin/pc/maintenance/start", methods=["POST"])
+@auth_decorator("admin")
+def maintenance_start():
+    from play_time import finalize_computer_session
+    from utils import has_active_session
+
+    if not config.CLUB_MAINTENANCE_PIN:
+        return jsonify({"error": "PIN обслуживания не настроен (CLUB_MAINTENANCE_PIN)"}), 503
+
+    data = request.get_json() or {}
+    computer_id = data.get("computer_id")
+    pin = str(data.get("pin", "")).strip()
+    reason = str(data.get("reason", "")).strip()
+    force = bool(data.get("force"))
+
+    if not computer_id:
+        return jsonify({"error": "Укажите computer_id"}), 400
+    if pin != config.CLUB_MAINTENANCE_PIN:
+        logging.warning(
+            "Неверный PIN обслуживания: admin_id=%s ip=%s pc=%s",
+            g.user.get("id"),
+            request.remote_addr,
+            computer_id,
+        )
+        return jsonify({"error": "Неверный PIN"}), 403
+    if len(reason) < 5:
+        return jsonify({"error": "Укажите причину (минимум 5 символов)"}), 400
+
+    computer = SQL_request(
+        "SELECT * FROM computers WHERE id = ?",
+        params=(int(computer_id),),
+        fetch="one",
+    )
+    if not computer:
+        return jsonify({"error": "Компьютер не найден"}), 404
+
+    if has_active_session(computer) and computer.get("status") == "занят" and not force:
+        return jsonify(
+            {
+                "error": "На ПК активна клиентская сессия. Подтвердите принудительное обслуживание.",
+                "requires_force": True,
+            }
+        ), 409
+
+    if has_active_session(computer):
+        finalize_computer_session(computer, source="maintenance_forced")
+
+    _close_open_maintenance(computer["id"])
+    SQL_request(
+        """
+        INSERT INTO maintenance_sessions (computer_id, admin_id, reason, admin_ip, billing_excluded)
+        VALUES (?, ?, ?, ?, 1)
+        """,
+        (computer["id"], g.user["id"], reason, request.remote_addr),
+        fetch="none",
+    )
+    SQL_request(
+        """
+        UPDATE computers
+        SET status = 'админ',
+            time_active = NULL,
+            user_active = NULL,
+            session_started_at = NULL,
+            session_duration_minutes = NULL
+        WHERE id = ?
+        """,
+        (computer["id"],),
+        fetch="none",
+    )
+
+    logging.info(
+        "Maintenance START pc=%s admin=%s reason=%s ip=%s",
+        computer.get("number_pc"),
+        g.user.get("id"),
+        reason,
+        request.remote_addr,
+    )
+    return jsonify(
+        {
+            "message": "Режим обслуживания включён",
+            "number_pc": computer.get("number_pc"),
+        }
+    ), 200
+
+
+@api.route("/admin/pc/maintenance/end", methods=["POST"])
+@auth_decorator("admin")
+def maintenance_end():
+    if not config.CLUB_MAINTENANCE_PIN:
+        return jsonify({"error": "PIN обслуживания не настроен (CLUB_MAINTENANCE_PIN)"}), 503
+
+    data = request.get_json() or {}
+    computer_id = data.get("computer_id")
+    pin = str(data.get("pin", "")).strip()
+
+    if not computer_id:
+        return jsonify({"error": "Укажите computer_id"}), 400
+    if pin != config.CLUB_MAINTENANCE_PIN:
+        return jsonify({"error": "Неверный PIN"}), 403
+
+    computer = SQL_request(
+        "SELECT * FROM computers WHERE id = ?",
+        params=(int(computer_id),),
+        fetch="one",
+    )
+    if not computer:
+        return jsonify({"error": "Компьютер не найден"}), 404
+
+    _close_open_maintenance(computer["id"])
+    SQL_request(
+        """
+        UPDATE computers
+        SET status = 'активен',
+            time_active = NULL,
+            user_active = NULL,
+            session_started_at = NULL,
+            session_duration_minutes = NULL
+        WHERE id = ?
+        """,
+        (computer["id"],),
+        fetch="none",
+    )
+
+    logging.info(
+        "Maintenance END pc=%s admin=%s ip=%s",
+        computer.get("number_pc"),
+        g.user.get("id"),
+        request.remote_addr,
+    )
+    return jsonify(
+        {
+            "message": "Режим обслуживания завершён",
+            "number_pc": computer.get("number_pc"),
+        }
+    ), 200
+
+
+@api.route("/admin/pc/maintenance/log", methods=["GET"])
+@auth_decorator("admin")
+def maintenance_log():
+    rows = SQL_request(
+        """
+        SELECT m.id, m.computer_id, c.number_pc, m.admin_id,
+               u.first_name, u.last_name, u.email,
+               m.reason, m.started_at, m.ended_at, m.admin_ip, m.billing_excluded
+        FROM maintenance_sessions m
+        LEFT JOIN computers c ON c.id = m.computer_id
+        LEFT JOIN users u ON u.id = m.admin_id
+        ORDER BY m.started_at DESC
+        LIMIT 200
+        """,
+        fetch="all",
+    )
+    return jsonify(rows or []), 200

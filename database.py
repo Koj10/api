@@ -355,6 +355,29 @@ ensure_play_sessions_table()
 ensure_cashback_column()
 
 
+def ensure_maintenance_sessions_table():
+    SQL_request(
+        """CREATE TABLE IF NOT EXISTS maintenance_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        computer_id INTEGER NOT NULL REFERENCES computers(id),
+        admin_id INTEGER NOT NULL REFERENCES users(id),
+        reason TEXT NOT NULL,
+        started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        ended_at DATETIME,
+        admin_ip TEXT,
+        billing_excluded INTEGER NOT NULL DEFAULT 1
+    )""",
+        fetch="none",
+    )
+    SQL_request(
+        "CREATE INDEX IF NOT EXISTS idx_maintenance_computer ON maintenance_sessions(computer_id, started_at)",
+        fetch="none",
+    )
+
+
+ensure_maintenance_sessions_table()
+
+
 def ensure_email_confirmed_sync():
     columns = {
         row["name"]

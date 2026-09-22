@@ -53,6 +53,8 @@ def edit_status():
         return jsonify({"message": "Зона изменена"}), 200
 
     if getattr(g, 'computer', None) and not getattr(g, 'user', None):
+        if status in ("админ",):
+            return jsonify({"error": "Доступ запрещён"}), 403
         if has_active_session(computer) and status in ("заблокирован", "активен", "ремонт"):
             return jsonify({"message": "Сессия активна", "status": "занят"}), 200
 
