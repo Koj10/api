@@ -100,6 +100,46 @@ def edit_status():
         logging.error(e)
         return jsonify({"error":"Неправильный запрос"}), 403
 
+@api.route('/pc/session/end', methods=['POST'])
+@auth_decorator('user')
+def end_own_session():
+    data = request.get_json(silent=True) or {}
+    pc_token = data.get('token') or data.get('pc_token')
+    if not pc_token:
+        return jsonify({"error": "Укажите компьютер"}), 400
+
+    computer = SQL_request(
+        "SELECT * FROM computers WHERE token = ?",
+        params=(pc_token,),
+        fetch='one',
+    )
+    if computer is None:
+        return jsonify({"error": "Компьютер не найден"}), 404
+    if computer.get("status") != "занят":
+        return jsonify({"error": "На этом ПК нет активной сессии"}), 400
+
+    user = g.user
+    if user.get("role") not in ("admin", "developer"):
+        if str(computer.get("user_active")) != str(user.get("id")):
+            return jsonify({"error": "Это не ваша сессия"}), 403
+
+    finalize_computer_session(computer, source="user_end")
+    SQL_request(
+        """
+        UPDATE computers
+        SET status = 'активен',
+            time_active = NULL,
+            user_active = NULL,
+            session_started_at = NULL,
+            session_duration_minutes = NULL
+        WHERE id = ?
+        """,
+        params=(computer["id"],),
+        fetch="none",
+    )
+    return jsonify({"message": "Сессия завершена"}), 200
+
+
 @api.route('/pc/status/<pc_token>', methods=['GET'])
 def get_status(pc_token):
     computer = SQL_request("SELECT * FROM computers WHERE token = ?", params=(pc_token,), fetch='one')
