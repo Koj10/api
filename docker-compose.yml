@@ -12,7 +12,4 @@ services:
       CONTAINER_PORT: "6001"
       DB_PATH: "/app/data/gamesense.db"
     volumes:
-      - gamesense-data:/app/data
-
-volumes:
-  gamesense-data:
+      - ./data:/app/data

@@ -4,47 +4,50 @@ import datetime
 from utils import get_computer_zone_by_token, resolve_package_price
 
 def is_package_active(package):
+    """Прайс клуба, время клуба = UTC+5.
+
+    Будни 08:00–14:00 — только утренний час (дневной).
+    3 и 5 часов (вечерний) — с 08:00 до 22:00.
+    Обычный час (бесконечный) — будни 14:00–22:00, выходные 08:00–22:00.
+    Ночь — 22:00–08:00.
+    """
+    if package.get("is_active") in (0, False, "0"):
+        return False
+
     now = datetime.datetime.now()
     current_time = (now + datetime.timedelta(hours=5)).time()
-    is_weekday_today = now.weekday() < 5  # Пн-Пт: 0-4
+    is_weekday_today = now.weekday() < 5
+    is_night = current_time >= datetime.time(22, 0) or current_time < datetime.time(8, 0)
+    is_morning = datetime.time(8, 0) <= current_time < datetime.time(14, 0)
 
-    if package['is_weekend'] == 0 and not is_weekday_today:
+    if package["is_weekend"] == 0 and not is_weekday_today:
         return False
-    elif package['is_weekend'] == 1 and is_weekday_today:
+    if package["is_weekend"] == 1 and is_weekday_today:
         return False
-    else:
-        period = package.get('time_period')
-        start_time = None
-        end_time = None
 
-        if period == "дневной":
-            start_time = datetime.time(8, 0)
-            end_time = datetime.time(14, 0)
-        elif period == "вечерний":
-            start_time = datetime.time(14, 0)
-            end_time = datetime.time(22, 0)
-        elif period == "ночной":
-            # Ночной период: 22:00 - 08:00
-            if datetime.time(22, 0) <= current_time or current_time < datetime.time(8, 0):
-                return True
-            else:
-                return False
-        elif period == "бесконечный":
-            # Доступен всегда, кроме 08:00–14:00
-            if datetime.time(8, 0) <= current_time < datetime.time(14, 0):
-                return False
-
-        if start_time is not None and end_time is not None:
-            if not (start_time <= current_time < end_time):
-                return False
-
-        return True  # Все условия выполнены
+    period = package.get("time_period")
+    if period == "дневной":
+        return is_weekday_today and is_morning
+    if period == "вечерний":
+        return not is_night
+    if period == "ночной":
+        return is_night
+    if period == "бесконечный":
+        if is_night:
+            return False
+        if is_weekday_today and is_morning:
+            return False
+        return True
+    return False
 
 @api.route('/time_packages', methods=['GET'])
 def time_packages():
     pc_token = request.args.get('pc_token')
     zone = get_computer_zone_by_token(pc_token)
-    packages = SQL_request("SELECT * FROM time_packages", fetch='all')  # Получаем все пакеты
+    packages = SQL_request(
+        "SELECT * FROM time_packages WHERE is_active = 1",
+        fetch="all",
+    )
 
     filtered_packages = []
 
@@ -69,8 +72,8 @@ def time_package(package_id):
     if 'image' in package:
         del package['image']
 
-    if not is_package_active(package):
-        package['is_active'] = 2
+    if package.get("is_active") not in (0, False, "0") and not is_package_active(package):
+        package["is_active"] = 2
 
     package['display_price'] = resolve_package_price(package, "regular")
 
@@ -87,8 +90,16 @@ def buy_product(type_product):
     protducts = ["time_packages"]
     if type_product not in protducts:
         return jsonify({"error": "Даннный продукт не найден"}), 400
-    else:
-        pc_token = data.get('pc_token')
-        zone = get_computer_zone_by_token(pc_token)
-        message, code = buy_products(g.user, product_id, type_product, quality, zone=zone)
-        return jsonify(message), code
+
+    package = SQL_request(
+        "SELECT * FROM time_packages WHERE id = ?",
+        (product_id,),
+        fetch="one",
+    )
+    if not package or not is_package_active(package):
+        return jsonify({"error": "Этот пакет сейчас недоступен"}), 403
+
+    pc_token = data.get("pc_token")
+    zone = get_computer_zone_by_token(pc_token)
+    message, code = buy_products(g.user, product_id, type_product, quality, zone=zone)
+    return jsonify(message), code
